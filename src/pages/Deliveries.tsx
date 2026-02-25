@@ -27,7 +27,7 @@ export default function Deliveries() {
       throw new Error("CEP não encontrado.");
     }
 
-    return data;
+    return data; // {logradouro, bairro, localidade, uf, ...}
   }
 
   async function geocodeEndereco(enderecoCompleto: string) {
@@ -41,20 +41,31 @@ export default function Deliveries() {
       throw new Error("Não encontrei coordenadas.");
     }
 
-    return data;
+    return data; // {lat, lng}
   }
 
   async function salvarEntrega() {
     try {
+      if (!cliente.trim()) throw new Error("Digite o nome do cliente.");
+      if (!pedido_id.trim()) throw new Error("Digite o Pedido/ID.");
+      if (!cep.trim()) throw new Error("Digite o CEP.");
+      if (!numero.trim()) throw new Error("Digite o número do endereço.");
+
       const dadosCep = await buscarCep(cep);
 
-      const enderecoCompleto = `${dadosCep.logradouro}, ${numero} - ${dadosCep.bairro}, ${dadosCep.localidade} - ${dadosCep.uf}, ${onlyDigits(cep)}`;
+      // alguns CEPs podem vir sem logradouro (geralmente CEP geral). Tratamos aqui:
+      if (!dadosCep.logradouro) {
+        throw new Error("CEP sem logradouro. Tente outro CEP ou preencha um CEP mais específico.");
+      }
+
+      // ✅ Formato mais certeiro para o Nominatim
+      const enderecoCompleto = `${dadosCep.logradouro}, ${numero}, ${dadosCep.localidade}, ${dadosCep.uf}, Brasil`;
 
       const coords = await geocodeEndereco(enderecoCompleto);
 
       const { error } = await supabase.from("deliveries").insert({
-        cliente,
-        pedido_id,
+        cliente: cliente.trim(),
+        pedido_id: pedido_id.trim(),
         endereco: enderecoCompleto,
         prioridade,
         lat: coords.lat,
@@ -65,14 +76,13 @@ export default function Deliveries() {
 
       alert("Entrega salva com sucesso!");
 
-      // limpar campos
       setCliente("");
       setPedidoId("");
       setCep("");
       setNumero("");
       setPrioridade("normal");
     } catch (e: any) {
-      alert(e.message);
+      alert(e?.message || "Erro ao salvar entrega.");
     }
   }
 
@@ -81,22 +91,17 @@ export default function Deliveries() {
       <h3>Entregas</h3>
 
       <label>Cliente</label>
-      <input
-        value={cliente}
-        onChange={(e) => setCliente(e.target.value)}
-      />
+      <input value={cliente} onChange={(e) => setCliente(e.target.value)} />
 
       <label>Pedido/ID</label>
-      <input
-        value={pedido_id}
-        onChange={(e) => setPedidoId(e.target.value)}
-      />
+      <input value={pedido_id} onChange={(e) => setPedidoId(e.target.value)} />
 
       <label>CEP</label>
       <input
         value={cep}
         onChange={(e) => setCep(e.target.value)}
         placeholder="00000-000"
+        inputMode="numeric"
       />
 
       <label>Número</label>
@@ -104,20 +109,16 @@ export default function Deliveries() {
         value={numero}
         onChange={(e) => setNumero(e.target.value)}
         placeholder="123"
+        inputMode="numeric"
       />
 
       <label>Prioridade</label>
-      <select
-        value={prioridade}
-        onChange={(e) => setPrioridade(e.target.value)}
-      >
+      <select value={prioridade} onChange={(e) => setPrioridade(e.target.value)}>
         <option value="normal">normal</option>
         <option value="alta">alta</option>
       </select>
 
-      <button onClick={salvarEntrega}>
-        Salvar entrega
-      </button>
+      <button onClick={salvarEntrega}>Salvar entrega</button>
     </div>
   );
 }
