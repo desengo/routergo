@@ -4,7 +4,6 @@ import { supabase } from "../lib/supabase";
 export default function Deliveries() {
   const [cliente, setCliente] = useState("");
   const [pedido_id, setPedidoId] = useState("");
-  const [endereco, setEndereco] = useState("");
   const [prioridade, setPrioridade] = useState("normal");
 
   const [cep, setCep] = useState("");
@@ -15,17 +14,17 @@ export default function Deliveries() {
   }
 
   async function buscarCep(cepInput: string) {
-    const cepLimpo = onlyDigits(cepInput);
+    const cepLimpo = onlyDigits(cepInput).slice(0, 8);
 
     if (cepLimpo.length !== 8) {
-      throw new Error("CEP inválido");
+      throw new Error("CEP inválido. Digite 8 números.");
     }
 
     const res = await fetch(`https://viacep.com.br/ws/${cepLimpo}/json/`);
     const data = await res.json();
 
-    if (data.erro) {
-      throw new Error("CEP não encontrado");
+    if (data?.erro) {
+      throw new Error("CEP não encontrado.");
     }
 
     return data;
@@ -39,7 +38,7 @@ export default function Deliveries() {
     const data = await res.json();
 
     if (!res.ok) {
-      throw new Error("Não encontrei coordenadas");
+      throw new Error("Não encontrei coordenadas.");
     }
 
     return data;
@@ -47,9 +46,9 @@ export default function Deliveries() {
 
   async function salvarEntrega() {
     try {
-      const d = await buscarCep(cep);
+      const dadosCep = await buscarCep(cep);
 
-      const enderecoCompleto = `${d.logradouro}, ${numero} - ${d.bairro}, ${d.localidade} - ${d.uf}, ${cep}`;
+      const enderecoCompleto = `${dadosCep.logradouro}, ${numero} - ${dadosCep.bairro}, ${dadosCep.localidade} - ${dadosCep.uf}, ${onlyDigits(cep)}`;
 
       const coords = await geocodeEndereco(enderecoCompleto);
 
@@ -66,11 +65,12 @@ export default function Deliveries() {
 
       alert("Entrega salva com sucesso!");
 
+      // limpar campos
       setCliente("");
       setPedidoId("");
       setCep("");
       setNumero("");
-      setEndereco("");
+      setPrioridade("normal");
     } catch (e: any) {
       alert(e.message);
     }
