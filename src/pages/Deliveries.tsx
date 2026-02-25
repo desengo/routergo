@@ -34,7 +34,7 @@ export default function Deliveries() {
     const { data, error } = await supabase
       .from("deliveries")
       .select("id,client_name,order_id,address_text,priority,lat,lng")
-      .eq("user_id", user.id) // ✅ GARANTIA user_id
+      .eq("user_id", user.id)
       .order("created_at", { ascending: false });
 
     setLoading(false);
@@ -55,14 +55,49 @@ export default function Deliveries() {
     const user = (await supabase.auth.getUser()).data.user;
     if (!user) return;
 
+    let latNum = lat ? Number(lat) : null;
+    let lngNum = lng ? Number(lng) : null;
+
+    const addrRaw = addressText.trim();
+
+    // ✅ Geocode automático se não tiver lat/lng manual
+    if ((latNum == null || lngNum == null) && addrRaw) {
+      // dica: melhora muito a taxa de acerto
+      const addr = addrRaw.toLowerCase().includes("sp") || addrRaw.toLowerCase().includes("são paulo")
+        ? addrRaw
+        : `${addrRaw}, São Paulo - SP, Brasil`;
+
+      try {
+        const resp = await fetch(`/.netlify/functions/geocode?q=${encodeURIComponent(addr)}`);
+        const j = await resp.json();
+
+        if (!j?.found) {
+          return alert(
+            "Não encontrei coordenadas para esse endereço.\n" +
+              "Tente colocar assim:\n" +
+              "Rua X, 123 - Bairro, Cidade - UF"
+          );
+        }
+
+        latNum = Number(j.lat);
+        lngNum = Number(j.lng);
+
+        if (!Number.isFinite(latNum) || !Number.isFinite(lngNum)) {
+          return alert("Geocode retornou coordenadas inválidas.");
+        }
+      } catch (e) {
+        return alert("Erro ao buscar coordenadas automaticamente (geocode).");
+      }
+    }
+
     const { error } = await supabase.from("deliveries").insert({
-      user_id: user.id, // ✅ GARANTIA user_id
+      user_id: user.id,
       client_name: clientName.trim(),
       order_id: orderId.trim(),
-      address_text: addressText.trim(),
+      address_text: addrRaw,
       priority,
-      lat: lat ? Number(lat) : null,
-      lng: lng ? Number(lng) : null
+      lat: latNum,
+      lng: lngNum
     });
 
     if (error) return alert("Erro ao salvar entrega: " + error.message);
@@ -73,6 +108,7 @@ export default function Deliveries() {
     setPriority("normal");
     setLat("");
     setLng("");
+
     load();
   }
 
@@ -86,9 +122,9 @@ export default function Deliveries() {
       .from("deliveries")
       .delete()
       .eq("id", id)
-      .eq("user_id", user.id); // ✅ GARANTIA user_id
+      .eq("user_id", user.id);
 
-    if (error) alert("Erro ao excluir entrega: " + error.message);
+    if (error) alert("Erro ao excluir: " + error.message);
     else load();
   }
 
@@ -96,9 +132,7 @@ export default function Deliveries() {
     <div className="card">
       <div className="topbar">
         <h3>Entregas</h3>
-        <button className="ghost" onClick={load}>
-          {loading ? "..." : "Atualizar"}
-        </button>
+        <button className="ghost" onClick={load}>{loading ? "..." : "Atualizar"}</button>
       </div>
 
       <div className="grid">
@@ -109,7 +143,11 @@ export default function Deliveries() {
         <input value={orderId} onChange={(e) => setOrderId(e.target.value)} />
 
         <label>Endereço</label>
-        <textarea value={addressText} onChange={(e) => setAddressText(e.target.value)} />
+        <textarea
+          value={addressText}
+          onChange={(e) => setAddressText(e.target.value)}
+          placeholder="Rua X, 123 - Bairro, Cidade - UF"
+        />
 
         <label>Prioridade</label>
         <select value={priority} onChange={(e) => setPriority(e.target.value as any)}>
@@ -117,10 +155,10 @@ export default function Deliveries() {
           <option value="urgente">urgente</option>
         </select>
 
-        <label>Latitude</label>
+        <label>Latitude (opcional)</label>
         <input value={lat} onChange={(e) => setLat(e.target.value)} placeholder="-23.55" />
 
-        <label>Longitude</label>
+        <label>Longitude (opcional)</label>
         <input value={lng} onChange={(e) => setLng(e.target.value)} placeholder="-46.63" />
       </div>
 
@@ -132,18 +170,11 @@ export default function Deliveries() {
         {items.map((d) => (
           <div key={d.id} className="item col">
             <div className="row space">
-              <b>
-                {d.priority === "urgente" ? "🚨 " : ""}
-                {d.client_name} — {d.order_id}
-              </b>
-              <button className="ghost" onClick={() => remove(d.id)}>
-                Excluir
-              </button>
+              <b>{d.client_name} — {d.order_id}</b>
+              <button className="ghost" onClick={() => remove(d.id)}>Excluir</button>
             </div>
             <div className="muted">{d.address_text}</div>
-            <div className="muted">
-              lat/lng: {d.lat ?? "—"} , {d.lng ?? "—"}
-            </div>
+            <div className="muted">lat/lng: {d.lat ?? "—"} , {d.lng ?? "—"}</div>
           </div>
         ))}
         {items.length === 0 && <p className="muted">Nenhuma entrega ainda.</p>}
