@@ -53,21 +53,23 @@ export default function Deliveries() {
 
       const dadosCep = await buscarCep(cep);
 
-      // alguns CEPs podem vir sem logradouro (geralmente CEP geral). Tratamos aqui:
       if (!dadosCep.logradouro) {
-        throw new Error("CEP sem logradouro. Tente outro CEP ou preencha um CEP mais específico.");
+        throw new Error(
+          "CEP sem logradouro (CEP geral). Tente um CEP mais específico."
+        );
       }
 
-      // ✅ Formato mais certeiro para o Nominatim
+      // formato mais certeiro pro Nominatim
       const enderecoCompleto = `${dadosCep.logradouro}, ${numero}, ${dadosCep.localidade}, ${dadosCep.uf}, Brasil`;
 
       const coords = await geocodeEndereco(enderecoCompleto);
 
+      // ✅ Nomes corretos da sua tabela no Supabase
       const { error } = await supabase.from("deliveries").insert({
-        cliente: cliente.trim(),
-        pedido_id: pedido_id.trim(),
-        endereco: enderecoCompleto,
-        prioridade,
+        client_name: cliente.trim(),
+        order_id: pedido_id.trim(),
+        address_text: enderecoCompleto,
+        priority: prioridade,
         lat: coords.lat,
         lng: coords.lng,
       });
