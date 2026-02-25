@@ -1,184 +1,123 @@
-import React, { useEffect, useState } from "react";
+import { useState } from "react";
 import { supabase } from "../lib/supabase";
 
-type Row = {
-  id: string;
-  client_name: string;
-  order_id: string;
-  address_text: string;
-  priority: "normal" | "urgente";
-  lat: number | null;
-  lng: number | null;
-};
-
 export default function Deliveries() {
-  const [items, setItems] = useState<Row[]>([]);
-  const [loading, setLoading] = useState(false);
+  const [cliente, setCliente] = useState("");
+  const [pedido_id, setPedidoId] = useState("");
+  const [endereco, setEndereco] = useState("");
+  const [prioridade, setPrioridade] = useState("normal");
 
-  const [clientName, setClientName] = useState("");
-  const [orderId, setOrderId] = useState("");
-  const [addressText, setAddressText] = useState("");
-  const [priority, setPriority] = useState<"normal" | "urgente">("normal");
-  const [lat, setLat] = useState("");
-  const [lng, setLng] = useState("");
+  const [cep, setCep] = useState("");
+  const [numero, setNumero] = useState("");
 
-  async function load() {
-    setLoading(true);
-
-    const user = (await supabase.auth.getUser()).data.user;
-    if (!user) {
-      setLoading(false);
-      return;
-    }
-
-    const { data, error } = await supabase
-      .from("deliveries")
-      .select("id,client_name,order_id,address_text,priority,lat,lng")
-      .eq("user_id", user.id)
-      .order("created_at", { ascending: false });
-
-    setLoading(false);
-
-    if (error) alert("Erro ao buscar entregas: " + error.message);
-    else setItems((data || []) as any);
+  function onlyDigits(s: string) {
+    return (s || "").replace(/\D/g, "");
   }
 
-  useEffect(() => {
-    load();
-  }, []);
+  async function buscarCep(cepInput: string) {
+    const cepLimpo = onlyDigits(cepInput);
 
-  async function add() {
-    if (!clientName.trim() || !orderId.trim() || !addressText.trim()) {
-      return alert("Preencha Cliente, Pedido e Endereço.");
+    if (cepLimpo.length !== 8) {
+      throw new Error("CEP inválido");
     }
 
-    const user = (await supabase.auth.getUser()).data.user;
-    if (!user) return;
+    const res = await fetch(`https://viacep.com.br/ws/${cepLimpo}/json/`);
+    const data = await res.json();
 
-    let latNum = lat ? Number(lat) : null;
-    let lngNum = lng ? Number(lng) : null;
-
-    const addrRaw = addressText.trim();
-
-    // ✅ Geocode automático se não tiver lat/lng manual
-    if ((latNum == null || lngNum == null) && addrRaw) {
-      // dica: melhora muito a taxa de acerto
-      const addr = addrRaw.toLowerCase().includes("sp") || addrRaw.toLowerCase().includes("são paulo")
-        ? addrRaw
-        : `${addrRaw}, São Paulo - SP, Brasil`;
-
-      try {
-        const resp = await fetch(`/.netlify/functions/geocode?q=${encodeURIComponent(addr)}`);
-        const j = await resp.json();
-
-        if (!j?.found) {
-          return alert(
-            "Não encontrei coordenadas para esse endereço.\n" +
-              "Tente colocar assim:\n" +
-              "Rua X, 123 - Bairro, Cidade - UF"
-          );
-        }
-
-        latNum = Number(j.lat);
-        lngNum = Number(j.lng);
-
-        if (!Number.isFinite(latNum) || !Number.isFinite(lngNum)) {
-          return alert("Geocode retornou coordenadas inválidas.");
-        }
-      } catch (e) {
-        return alert("Erro ao buscar coordenadas automaticamente (geocode).");
-      }
+    if (data.erro) {
+      throw new Error("CEP não encontrado");
     }
 
-    const { error } = await supabase.from("deliveries").insert({
-      user_id: user.id,
-      client_name: clientName.trim(),
-      order_id: orderId.trim(),
-      address_text: addrRaw,
-      priority,
-      lat: latNum,
-      lng: lngNum
-    });
-
-    if (error) return alert("Erro ao salvar entrega: " + error.message);
-
-    setClientName("");
-    setOrderId("");
-    setAddressText("");
-    setPriority("normal");
-    setLat("");
-    setLng("");
-
-    load();
+    return data;
   }
 
-  async function remove(id: string) {
-    if (!confirm("Excluir entrega?")) return;
+  async function geocodeEndereco(enderecoCompleto: string) {
+    const res = await fetch(
+      `/.netlify/functions/geocode?q=${encodeURIComponent(enderecoCompleto)}`
+    );
 
-    const user = (await supabase.auth.getUser()).data.user;
-    if (!user) return;
+    const data = await res.json();
 
-    const { error } = await supabase
-      .from("deliveries")
-      .delete()
-      .eq("id", id)
-      .eq("user_id", user.id);
+    if (!res.ok) {
+      throw new Error("Não encontrei coordenadas");
+    }
 
-    if (error) alert("Erro ao excluir: " + error.message);
-    else load();
+    return data;
+  }
+
+  async function salvarEntrega() {
+    try {
+      const d = await buscarCep(cep);
+
+      const enderecoCompleto = `${d.logradouro}, ${numero} - ${d.bairro}, ${d.localidade} - ${d.uf}, ${cep}`;
+
+      const coords = await geocodeEndereco(enderecoCompleto);
+
+      const { error } = await supabase.from("deliveries").insert({
+        cliente,
+        pedido_id,
+        endereco: enderecoCompleto,
+        prioridade,
+        lat: coords.lat,
+        lng: coords.lng,
+      });
+
+      if (error) throw error;
+
+      alert("Entrega salva com sucesso!");
+
+      setCliente("");
+      setPedidoId("");
+      setCep("");
+      setNumero("");
+      setEndereco("");
+    } catch (e: any) {
+      alert(e.message);
+    }
   }
 
   return (
     <div className="card">
-      <div className="topbar">
-        <h3>Entregas</h3>
-        <button className="ghost" onClick={load}>{loading ? "..." : "Atualizar"}</button>
-      </div>
+      <h3>Entregas</h3>
 
-      <div className="grid">
-        <label>Cliente</label>
-        <input value={clientName} onChange={(e) => setClientName(e.target.value)} />
+      <label>Cliente</label>
+      <input
+        value={cliente}
+        onChange={(e) => setCliente(e.target.value)}
+      />
 
-        <label>Pedido/ID</label>
-        <input value={orderId} onChange={(e) => setOrderId(e.target.value)} />
+      <label>Pedido/ID</label>
+      <input
+        value={pedido_id}
+        onChange={(e) => setPedidoId(e.target.value)}
+      />
 
-        <label>Endereço</label>
-        <textarea
-          value={addressText}
-          onChange={(e) => setAddressText(e.target.value)}
-          placeholder="Rua X, 123 - Bairro, Cidade - UF"
-        />
+      <label>CEP</label>
+      <input
+        value={cep}
+        onChange={(e) => setCep(e.target.value)}
+        placeholder="00000-000"
+      />
 
-        <label>Prioridade</label>
-        <select value={priority} onChange={(e) => setPriority(e.target.value as any)}>
-          <option value="normal">normal</option>
-          <option value="urgente">urgente</option>
-        </select>
+      <label>Número</label>
+      <input
+        value={numero}
+        onChange={(e) => setNumero(e.target.value)}
+        placeholder="123"
+      />
 
-        <label>Latitude (opcional)</label>
-        <input value={lat} onChange={(e) => setLat(e.target.value)} placeholder="-23.55" />
+      <label>Prioridade</label>
+      <select
+        value={prioridade}
+        onChange={(e) => setPrioridade(e.target.value)}
+      >
+        <option value="normal">normal</option>
+        <option value="alta">alta</option>
+      </select>
 
-        <label>Longitude (opcional)</label>
-        <input value={lng} onChange={(e) => setLng(e.target.value)} placeholder="-46.63" />
-      </div>
-
-      <div className="row" style={{ marginTop: 10 }}>
-        <button onClick={add}>Salvar entrega</button>
-      </div>
-
-      <div className="list" style={{ marginTop: 12 }}>
-        {items.map((d) => (
-          <div key={d.id} className="item col">
-            <div className="row space">
-              <b>{d.client_name} — {d.order_id}</b>
-              <button className="ghost" onClick={() => remove(d.id)}>Excluir</button>
-            </div>
-            <div className="muted">{d.address_text}</div>
-            <div className="muted">lat/lng: {d.lat ?? "—"} , {d.lng ?? "—"}</div>
-          </div>
-        ))}
-        {items.length === 0 && <p className="muted">Nenhuma entrega ainda.</p>}
-      </div>
+      <button onClick={salvarEntrega}>
+        Salvar entrega
+      </button>
     </div>
   );
 }
