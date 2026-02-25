@@ -1,45 +1,49 @@
-export async function handler(event: any) {
+export default async (req, context) => {
   try {
-    const q = (event.queryStringParameters?.q || "").toString().trim();
+    const url = new URL(req.url);
+    const q = url.searchParams.get("q");
+
     if (!q) {
-      return { statusCode: 400, body: JSON.stringify({ error: "Missing q" }) };
+      return new Response(JSON.stringify({ error: "missing q" }), {
+        status: 400,
+        headers: { "content-type": "application/json" },
+      });
     }
 
-    const url =
-      "https://nominatim.openstreetmap.org/search?" +
-      new URLSearchParams({
-        q,
-        format: "json",
-        addressdetails: "1",
-        limit: "1"
-      }).toString();
+    const nominatimUrl =
+      "https://nominatim.openstreetmap.org/search?format=json&limit=1&q=" +
+      encodeURIComponent(q);
 
-    const res = await fetch(url, {
+    const r = await fetch(nominatimUrl, {
       headers: {
-        "User-Agent": "routergo/1.0 (contact: suporte@routergo.local)"
-      }
+        "User-Agent": "RouterGo/1.0",
+        "Accept": "application/json",
+      },
     });
 
-    if (!res.ok) {
-      return { statusCode: 502, body: JSON.stringify({ error: "Geocode upstream failed" }) };
+    const data = await r.json();
+
+    if (!data?.length) {
+      return new Response(JSON.stringify({ error: "not_found" }), {
+        status: 404,
+        headers: { "content-type": "application/json" },
+      });
     }
 
-    const data = await res.json();
-    const first = data?.[0];
-    if (!first) {
-      return { statusCode: 200, body: JSON.stringify({ found: false }) };
-    }
-
-    return {
-      statusCode: 200,
-      body: JSON.stringify({
-        found: true,
-        lat: Number(first.lat),
-        lng: Number(first.lon),
-        display_name: first.display_name
-      })
-    };
-  } catch (e: any) {
-    return { statusCode: 500, body: JSON.stringify({ error: e?.message || "unknown" }) };
+    return new Response(
+      JSON.stringify({
+        lat: Number(data[0].lat),
+        lng: Number(data[0].lon),
+      }),
+      {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }
+    );
+  } catch (e) {
+    return new Response(JSON.stringify({ error: "server_error" }), {
+      status: 500,
+      headers: { "content-type": "application/json" },
+    });
   }
-}
+};
