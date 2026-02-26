@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { supabase } from "../lib/supabase";
-import { clusterByRadius, orderNearestNeighbor, totalDistanceKm, type Stop } from "../lib/routing";
+import { generateRoutesMVP, type Stop } from "../lib/routing";
 
 type DeliveryRow = {
   id: string;
@@ -14,39 +15,45 @@ type DeliveryRow = {
 type RouteRow = {
   id: string;
   name: string | null;
-  stops: Array<{ lat: number; lng: number; label: string }> | null;
+  stops: Stop[]; // JSON no banco
   total_est_km: number | null;
   created_at?: string;
 };
 
-async function getUserId() {
-  const { data } = await supabase.auth.getSession();
-  return data.session?.user?.id ?? null;
-}
+export default function Routes() {
+  const nav = useNavigate();
 
-export default function RoutesPage() {
   const [deliveries, setDeliveries] = useState<DeliveryRow[]>([]);
   const [routes, setRoutes] = useState<RouteRow[]>([]);
   const [loading, setLoading] = useState(false);
 
-  const [maxStops, setMaxStops] = useState<number>(5);
-  const [radiusKm, setRadiusKm] = useState<number>(1.2);
+  const [maxStops, setMaxStops] = useState(5);
+  const [radiusKm, setRadiusKm] = useState(1.2);
+
+  async function getUser() {
+    const { data } = await supabase.auth.getSession();
+    return data.session?.user ?? null;
+  }
 
   async function loadAll() {
-    const uid = await getUserId();
-    if (!uid) return;
-
     setLoading(true);
+
+    const user = await getUser();
+    if (!user) {
+      setLoading(false);
+      return;
+    }
 
     const d = await supabase
       .from("deliveries")
       .select("id,client_name,order_id,address_text,lat,lng")
-      .eq("user_id", uid);
+      .eq("user_id", user.id)
+      .order("created_at", { ascending: false });
 
     const r = await supabase
       .from("routes")
       .select("id,name,stops,total_est_km,created_at")
-      .eq("user_id", uid)
+      .eq("user_id", user.id)
       .order("created_at", { ascending: false });
 
     setLoading(false);
@@ -62,60 +69,56 @@ export default function RoutesPage() {
     loadAll();
   }, []);
 
-  const usableStops: Stop[] = useMemo(() => {
+  const validStops = useMemo(() => {
     return deliveries
       .filter((d) => d.lat != null && d.lng != null)
       .map((d) => ({
+        delivery_id: d.id,
         lat: d.lat as number,
         lng: d.lng as number,
         label: `${d.client_name} — ${d.address_text}`,
       }));
   }, [deliveries]);
 
-  function openMapbox(stops: Array<{ lat: number; lng: number; label: string }>) {
+  function openMapbox(stops: Stop[]) {
     sessionStorage.setItem("routergo_stops", JSON.stringify(stops));
-    window.location.href = "/route-mapbox";
+    nav("/route-mapbox");
   }
 
-  async function gerarRotas() {
-    const uid = await getUserId();
-    if (!uid) return;
+  async function onGenerate() {
+    const user = await getUser();
+    if (!user) return;
 
-    if (usableStops.length < 2) {
+    if (validStops.length < 2) {
       alert("Precisa de pelo menos 2 entregas com coordenadas para gerar rota.");
       return;
     }
 
-    const groups = clusterByRadius(
-      usableStops,
-      Math.max(0.1, Number(radiusKm) || 1.2),
-      Math.max(2, Number(maxStops) || 5)
-    );
-
     setLoading(true);
 
-    // (opcional) apaga rotas antigas antes de gerar novamente:
-    // await supabase.from("routes").delete().eq("user_id", uid);
+    // 1) gera rotas no front (MVP)
+    const generated = generateRoutesMVP(validStops, { maxStops, radiusKm });
 
-    for (let i = 0; i < groups.length; i++) {
-      const ordered = orderNearestNeighbor(groups[i]);
-      const km = totalDistanceKm(ordered);
+    // 2) salva no Supabase (routes)
+    // opcional: limpar rotas antigas do usuário antes de inserir
+    // await supabase.from("routes").delete().eq("user_id", user.id);
 
-      const ins = await supabase.from("routes").insert({
-        user_id: uid,
-        name: `Rota ${i + 1}`,
-        stops: ordered,
-        total_est_km: km,
-      });
+    const rowsToInsert = generated.map((g, idx) => ({
+      user_id: user.id,
+      name: `Rota ${idx + 1}`,
+      stops: g.stops,
+      total_est_km: g.totalKm,
+    }));
 
-      if (ins.error) {
-        setLoading(false);
-        alert("Erro ao salvar rota: " + ins.error.message);
-        return;
-      }
-    }
+    const ins = await supabase.from("routes").insert(rowsToInsert);
 
     setLoading(false);
+
+    if (ins.error) {
+      alert("Erro ao salvar rotas: " + ins.error.message);
+      return;
+    }
+
     await loadAll();
   }
 
@@ -123,9 +126,9 @@ export default function RoutesPage() {
     <div className="card">
       <div className="topbar">
         <h3>Rotas</h3>
-        <div className="row" style={{ gap: 10, flexWrap: "wrap" }}>
-          <button onClick={gerarRotas} disabled={loading}>
-            {loading ? "..." : "Gerar rotas"}
+        <div className="row" style={{ gap: 10 }}>
+          <button className="primary" onClick={onGenerate} disabled={loading}>
+            Gerar rotas
           </button>
           <button className="ghost" onClick={loadAll}>
             {loading ? "..." : "Atualizar"}
@@ -133,22 +136,30 @@ export default function RoutesPage() {
         </div>
       </div>
 
-      <div className="grid2" style={{ marginTop: 12 }}>
+      <div className="grid2">
         <div>
-          <label className="muted">Máx paradas por rota</label>
-          <input type="number" min={2} value={maxStops} onChange={(e) => setMaxStops(Number(e.target.value))} />
+          <label>Máx paradas por rota</label>
+          <input
+            value={maxStops}
+            onChange={(e) => setMaxStops(Number(e.target.value || 1))}
+            type="number"
+            min={2}
+          />
         </div>
+
         <div>
-          <label className="muted">Raio de agrupamento (km)</label>
-          <input type="number" step="0.1" min={0.1} value={radiusKm} onChange={(e) => setRadiusKm(Number(e.target.value))} />
+          <label>Raio de agrupamento (km)</label>
+          <input
+            value={radiusKm}
+            onChange={(e) => setRadiusKm(Number(e.target.value || 0.5))}
+            type="number"
+            step="0.1"
+            min={0.2}
+          />
         </div>
       </div>
 
-      <div className="muted" style={{ marginTop: 10 }}>
-        Entregas com coordenadas disponíveis: <b>{usableStops.length}</b>
-      </div>
-
-      <div className="list" style={{ marginTop: 14 }}>
+      <div className="list">
         {routes.map((r) => {
           const stops = Array.isArray(r.stops) ? r.stops : [];
           const canOpen = stops.length >= 2;
@@ -157,27 +168,32 @@ export default function RoutesPage() {
             <div key={r.id} className="item col">
               <div className="row space">
                 <b>{r.name || "Rota"}</b>
-                <span className="muted">~{(r.total_est_km ?? 0).toFixed(2)} km</span>
+                <span className="muted">~{r.total_est_km?.toFixed?.(2) ?? r.total_est_km ?? "?"} km</span>
               </div>
 
-              <ol style={{ marginTop: 10 }}>
+              <ol style={{ marginTop: 8 }}>
                 {stops.map((s, idx) => (
-                  <li key={idx}>{idx + 1}. {s.label}</li>
+                  <li key={idx}>
+                    {idx + 1}. {s.label || "Parada"}
+                    <div className="muted" style={{ fontSize: 12 }}>
+                      {s.lat}, {s.lng}
+                    </div>
+                  </li>
                 ))}
               </ol>
 
-              <div className="row" style={{ gap: 10, marginTop: 12, flexWrap: "wrap" }}>
+              <div className="row" style={{ gap: 10, marginTop: 10, flexWrap: "wrap" }}>
                 <button className="ghost" disabled={!canOpen} onClick={() => openMapbox(stops)}>
                   Ver no Mapbox
                 </button>
 
-                {!canOpen && <span className="muted">Precisa de pelo menos 2 paradas com coordenadas.</span>}
+                {!canOpen && <span className="muted">Precisa de 2+ paradas com coordenadas.</span>}
               </div>
             </div>
           );
         })}
 
-        {routes.length === 0 && <p className="muted">Nenhuma rota ainda. Gere uma rota.</p>}
+        {routes.length === 0 && <p className="muted">Nenhuma rota ainda.</p>}
       </div>
     </div>
   );
