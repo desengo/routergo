@@ -1,166 +1,163 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import mapboxgl from "mapbox-gl";
+import "mapbox-gl/dist/mapbox-gl.css";
+import { useNavigate } from "react-router-dom";
 
-type Stop = { lat: number; lng: number; label?: string };
+type Stop = { lat: number; lng: number; label?: string; delivery_id?: string };
 
 export default function RouteMapbox() {
-  const mapEl = useRef<HTMLDivElement | null>(null);
-  const mapRef = useRef<mapboxgl.Map | null>(null);
+  const nav = useNavigate();
+  const mapDivRef = useRef<HTMLDivElement | null>(null);
 
-  const [msg, setMsg] = useState("Carregando…");
-  const [km, setKm] = useState<number | null>(null);
-  const [min, setMin] = useState<number | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [distanceKm, setDistanceKm] = useState<number | null>(null);
+  const [durationMin, setDurationMin] = useState<number | null>(null);
+
+  const token = (import.meta as any).env.VITE_MAPBOX_TOKEN as string | undefined;
 
   const stops: Stop[] = useMemo(() => {
     try {
       const raw = sessionStorage.getItem("routergo_stops");
-      const parsed = raw ? JSON.parse(raw) : [];
-      if (!Array.isArray(parsed)) return [];
-      return parsed
+      if (!raw) return [];
+      const arr = JSON.parse(raw);
+      if (!Array.isArray(arr)) return [];
+      return arr
         .map((s: any) => ({
           lat: Number(s.lat),
           lng: Number(s.lng),
-          label: s.label ? String(s.label) : undefined,
+          label: typeof s.label === "string" ? s.label : undefined,
         }))
-        .filter((s: Stop) => Number.isFinite(s.lat) && Number.isFinite(s.lng));
+        .filter((s: any) => Number.isFinite(s.lat) && Number.isFinite(s.lng));
     } catch {
       return [];
     }
   }, []);
 
   useEffect(() => {
-    const token = import.meta.env.VITE_MAPBOX_TOKEN as string | undefined;
     if (!token) {
-      setMsg("ERRO: VITE_MAPBOX_TOKEN não configurado no Netlify.");
+      setError("VITE_MAPBOX_TOKEN não configurado.");
       return;
     }
-    (mapboxgl as any).accessToken = token;
+    mapboxgl.accessToken = token;
 
-    if (!mapEl.current) return;
+    if (!mapDivRef.current) return;
 
-    if (stops.length < 2) {
-      setMsg("Precisa de pelo menos 2 paradas para desenhar a rota.");
-      return;
-    }
-
-    const first = stops[0];
+    const center = stops.length ? [stops[0].lng, stops[0].lat] : [-46.6333, -23.5505];
 
     const map = new mapboxgl.Map({
-      container: mapEl.current,
+      container: mapDivRef.current,
       style: "mapbox://styles/mapbox/dark-v11",
-      center: [first.lng, first.lat],
-      zoom: 13,
+      center: center as any,
+      zoom: stops.length ? 13 : 10,
     });
 
     map.addControl(new mapboxgl.NavigationControl(), "top-right");
-    mapRef.current = map;
 
-    stops.forEach((s, idx) => {
-      const el = document.createElement("div");
-      el.className = "mk";
-      el.innerText = String(idx + 1);
+    map.on("load", async () => {
+      stops.forEach((s, idx) => {
+        const el = document.createElement("div");
+        el.style.width = "34px";
+        el.style.height = "34px";
+        el.style.borderRadius = "999px";
+        el.style.display = "grid";
+        el.style.placeItems = "center";
+        el.style.background = "#18ff6d";
+        el.style.boxShadow = "0 0 18px rgba(24,255,109,.6)";
+        el.style.color = "#07140c";
+        el.style.fontWeight = "900";
+        el.textContent = String(idx + 1);
 
-      new mapboxgl.Marker({ element: el })
-        .setLngLat([s.lng, s.lat])
-        .setPopup(new mapboxgl.Popup({ offset: 18 }).setText(s.label || `Parada ${idx + 1}`))
-        .addTo(map);
-    });
+        new mapboxgl.Marker({ element: el })
+          .setLngLat([s.lng, s.lat])
+          .setPopup(new mapboxgl.Popup({ offset: 16 }).setText(s.label || `Parada ${idx + 1}`))
+          .addTo(map);
+      });
 
-    async function draw() {
+      if (stops.length < 2) {
+        setError("Precisa de pelo menos 2 paradas (lat/lng) para desenhar a rota.");
+        return;
+      }
+
       try {
-        setMsg(`Calculando rota… Paradas: ${stops.length} (Mapbox aceita até 25)`);
-
-        const sliced = stops.slice(0, 25);
-        const coords = sliced.map((s) => `${s.lng},${s.lat}`).join(";");
-
+        const coords = stops.map((s) => `${s.lng},${s.lat}`).join(";");
         const url =
           `https://api.mapbox.com/directions/v5/mapbox/driving/${coords}` +
-          `?geometries=geojson&overview=full&steps=false&access_token=${encodeURIComponent(token)}`;
+          `?geometries=geojson&overview=full&steps=false&access_token=${token}`;
 
         const res = await fetch(url);
-        const data = await res.json();
+        const json = await res.json();
 
-        const route = data?.routes?.[0];
-        if (!route?.geometry) throw new Error(data?.message || "Sem rota retornada.");
+        if (!json?.routes?.[0]?.geometry) {
+          setError("Não consegui calcular a rota no Mapbox.");
+          return;
+        }
 
-        const geometry = route.geometry;
+        const route = json.routes[0];
+        setDistanceKm(route.distance ? route.distance / 1000 : null);
+        setDurationMin(route.duration ? route.duration / 60 : null);
 
-        const distKm = route.distance ? route.distance / 1000 : null;
-        const durMin = route.duration ? route.duration / 60 : null;
-        setKm(distKm ? Math.round(distKm * 10) / 10 : null);
-        setMin(durMin ? Math.round(durMin) : null);
+        const geo = { type: "Feature", properties: {}, geometry: route.geometry };
 
-        setMsg("Rota desenhada ✅");
-
-        map.on("load", () => {
-          if (!map.getSource("route")) {
-            map.addSource("route", {
-              type: "geojson",
-              data: { type: "Feature", properties: {}, geometry },
-            });
-          } else {
-            (map.getSource("route") as any).setData({
-              type: "Feature",
-              properties: {},
-              geometry,
-            });
-          }
-
-          if (!map.getLayer("route-casing")) {
-            map.addLayer({
-              id: "route-casing",
-              type: "line",
-              source: "route",
-              layout: { "line-join": "round", "line-cap": "round" },
-              paint: { "line-width": 9, "line-color": "#0b1a39", "line-opacity": 0.95 },
-            });
-          }
-
-          if (!map.getLayer("route-line")) {
-            map.addLayer({
-              id: "route-line",
-              type: "line",
-              source: "route",
-              layout: { "line-join": "round", "line-cap": "round" },
-              paint: { "line-width": 6, "line-color": "#3b82f6", "line-opacity": 0.95 },
-            });
-          }
-
-          const bounds = new mapboxgl.LngLatBounds();
-          sliced.forEach((s) => bounds.extend([s.lng, s.lat]));
-          map.fitBounds(bounds, { padding: 70, maxZoom: 16 });
+        map.addSource("route", { type: "geojson", data: geo as any });
+        map.addLayer({
+          id: "route-line",
+          type: "line",
+          source: "route",
+          layout: { "line-join": "round", "line-cap": "round" },
+          paint: { "line-width": 6, "line-color": "#2f7bff", "line-opacity": 0.9 },
         });
-      } catch (e: any) {
-        setMsg(`Erro ao calcular rota: ${e?.message || "desconhecido"}`);
-      }
-    }
 
-    draw();
+        // fit bounds
+        const bounds = new mapboxgl.LngLatBounds();
+        stops.forEach((s) => bounds.extend([s.lng, s.lat]));
+        map.fitBounds(bounds, { padding: 60, duration: 600 });
+
+        setError(null);
+      } catch {
+        setError("Erro ao calcular rota.");
+      }
+    });
 
     return () => map.remove();
-  }, [stops]);
+  }, [token, stops]);
 
   return (
     <div className="wrap">
       <div className="topbar">
         <h2>Rota no Mapa</h2>
-        <button className="ghost" onClick={() => history.back()}>
+        <button className="ghost" onClick={() => nav("/")}>
           Voltar
         </button>
       </div>
 
-      <div className="card">
-        <b>{msg}</b>
-        <div className="muted" style={{ marginTop: 6 }}>
-          {km != null && min != null ? (
-            <>Distância ~ {km} km · Duração ~ {min} min · Paradas: {stops.length}</>
-          ) : (
-            <>Paradas: {stops.length}</>
-          )}
-        </div>
+      <div className="card" style={{ marginBottom: 12 }}>
+        {error ? (
+          <>
+            <b>{error}</b>
+            <div className="muted" style={{ marginTop: 6 }}>
+              Paradas: {stops.length}
+            </div>
+          </>
+        ) : (
+          <>
+            <b>Rota desenhada ✅</b>
+            <div className="muted" style={{ marginTop: 6 }}>
+              Distância ~ {distanceKm ? distanceKm.toFixed(1) : "?"} km · Duração ~{" "}
+              {durationMin ? Math.round(durationMin) : "?"} min · Paradas: {stops.length}
+            </div>
+          </>
+        )}
       </div>
 
-      <div className="mapBox" ref={mapEl} />
+      <div
+        ref={mapDivRef}
+        style={{
+          height: "65vh",
+          borderRadius: 18,
+          overflow: "hidden",
+          border: "1px solid rgba(24,255,109,.25)",
+        }}
+      />
     </div>
   );
 }
