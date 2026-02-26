@@ -25,10 +25,8 @@ export default function App() {
 
   if (!ready) return null;
 
-  // Não logado -> login
   if (!session) return <Login />;
 
-  // Logado -> rotas do app
   return (
     <Routes>
       <Route path="/" element={<Dashboard />} />
