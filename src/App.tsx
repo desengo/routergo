@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { Routes, Route, Navigate } from "react-router-dom";
+import { Routes as RRoutes, Route, Navigate } from "react-router-dom";
 import { supabase } from "./lib/supabase";
 
 import Login from "./pages/Login";
@@ -16,10 +16,7 @@ export default function App() {
       setReady(true);
     });
 
-    const { data: sub } = supabase.auth.onAuthStateChange((_e, s) => {
-      setSession(s);
-    });
-
+    const { data: sub } = supabase.auth.onAuthStateChange((_e, s) => setSession(s));
     return () => sub.subscription.unsubscribe();
   }, []);
 
@@ -28,10 +25,10 @@ export default function App() {
   if (!session) return <Login />;
 
   return (
-    <Routes>
+    <RRoutes>
       <Route path="/" element={<Dashboard />} />
       <Route path="/route-mapbox" element={<RouteMapbox />} />
       <Route path="*" element={<Navigate to="/" replace />} />
-    </Routes>
+    </RRoutes>
   );
 }
