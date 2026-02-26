@@ -7,7 +7,7 @@ export const handler: Handler = async (event) => {
       return {
         statusCode: 500,
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ error: "MAPBOX_TOKEN missing" }),
+        body: JSON.stringify({ error: "MAPBOX_TOKEN missing in Netlify env" }),
       };
     }
 
@@ -16,12 +16,14 @@ export const handler: Handler = async (event) => {
       return {
         statusCode: 400,
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ error: "coords required" }),
+        body: JSON.stringify({ error: "coords required. Example: lng,lat;lng,lat" }),
       };
     }
 
+    const profile = event.queryStringParameters?.profile || "driving";
+
     const url =
-      `https://api.mapbox.com/directions/v5/mapbox/driving/${encodeURIComponent(coords)}` +
+      `https://api.mapbox.com/directions/v5/mapbox/${encodeURIComponent(profile)}/${encodeURIComponent(coords)}` +
       `?geometries=geojson&overview=full&steps=false&access_token=${encodeURIComponent(token)}`;
 
     const r = await fetch(url);
