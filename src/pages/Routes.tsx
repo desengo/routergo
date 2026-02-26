@@ -1,194 +1,154 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { supabase } from "../lib/supabase";
 
-import { MapContainer, TileLayer, Marker, Popup, Polyline } from "react-leaflet";
-import L from "leaflet";
-
-// ✅ fix ícone do marker no Vite/Netlify
-delete (L.Icon.Default.prototype as any)._getIconUrl;
-L.Icon.Default.mergeOptions({
-  iconRetinaUrl: "https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png",
-  iconUrl: "https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png",
-  shadowUrl: "https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png",
-});
-
-type Delivery = {
+type DeliveryRow = {
   id: string;
   client_name: string;
   order_id: string;
   address_text: string;
   lat: number | null;
   lng: number | null;
-  priority: "normal" | "urgente";
 };
 
-function googleMapsDirectionsUrl(points: Array<{ lat: number; lng: number }>) {
-  // Google aceita até vários waypoints, mas em geral ok para MVP.
-  // Estrutura: origin, destination e waypoints separados.
-  if (points.length < 2) return "";
+type RouteStop = { lat: number; lng: number; label?: string };
 
-  const origin = `${points[0].lat},${points[0].lng}`;
-  const destination = `${points[points.length - 1].lat},${points[points.length - 1].lng}`;
-  const waypoints =
-    points.length > 2
-      ? points
-          .slice(1, -1)
-          .map((p) => `${p.lat},${p.lng}`)
-          .join("|")
-      : "";
+type RouteRow = {
+  id: string;
+  name: string | null;
 
-  const base = `https://www.google.com/maps/dir/?api=1&travelmode=driving&origin=${encodeURIComponent(
-    origin
-  )}&destination=${encodeURIComponent(destination)}`;
+  // pode existir um desses dois:
+  delivery_ids?: string[]; // array
+  stops?: RouteStop[];     // json
 
-  return waypoints ? `${base}&waypoints=${encodeURIComponent(waypoints)}` : base;
-}
+  total_est_km: number | null;
+  created_at?: string;
+};
 
 export default function Routes() {
+  const [deliveries, setDeliveries] = useState<DeliveryRow[]>([]);
+  const [routes, setRoutes] = useState<RouteRow[]>([]);
   const [loading, setLoading] = useState(false);
-  const [deliveries, setDeliveries] = useState<Delivery[]>([]);
-  const [selectedIds, setSelectedIds] = useState<Record<string, boolean>>({});
 
   async function getUser() {
     const { data } = await supabase.auth.getSession();
     return data.session?.user ?? null;
   }
 
-  async function loadDeliveries() {
+  async function loadAll() {
     setLoading(true);
+
     const user = await getUser();
     if (!user) {
       setLoading(false);
-      alert("Faça login novamente.");
       return;
     }
 
-    const { data, error } = await supabase
+    const d = await supabase
       .from("deliveries")
-      .select("id,client_name,order_id,address_text,lat,lng,priority")
+      .select("id,client_name,order_id,address_text,lat,lng")
+      .eq("user_id", user.id);
+
+    // buscamos delivery_ids e stops (se existir) — o Supabase ignora colunas inexistentes?
+    // Se der erro por coluna inexistente, ajuste o select para o seu schema.
+    const r = await supabase
+      .from("routes")
+      .select("id,name,delivery_ids,stops,total_est_km,created_at")
       .eq("user_id", user.id)
       .order("created_at", { ascending: false });
 
     setLoading(false);
 
-    if (error) {
-      alert("Erro ao buscar entregas: " + error.message);
-      return;
-    }
+    if (d.error) alert("Erro ao buscar entregas: " + d.error.message);
+    if (r.error) alert("Erro ao buscar rotas: " + r.error.message);
 
-    setDeliveries((data || []) as any);
+    setDeliveries((d.data || []) as any);
+    setRoutes((r.data || []) as any);
   }
 
   useEffect(() => {
-    loadDeliveries();
+    loadAll();
   }, []);
 
-  const withCoords = useMemo(() => {
-    return deliveries.filter((d) => Number.isFinite(d.lat as any) && Number.isFinite(d.lng as any));
-  }, [deliveries]);
+  const byId = useMemo(() => new Map(deliveries.map((d) => [d.id, d] as const)), [deliveries]);
 
-  const selectedStops = useMemo(() => {
-    // mantém ordem por prioridade primeiro, depois pela lista (MVP)
-    const chosen = withCoords.filter((d) => selectedIds[d.id]);
-    chosen.sort((a, b) => (a.priority === b.priority ? 0 : a.priority === "urgente" ? -1 : 1));
-    return chosen;
-  }, [withCoords, selectedIds]);
+  function openMapbox(stops: Array<{ lat: number; lng: number; label: string }>) {
+    const payload = encodeURIComponent(JSON.stringify(stops));
+    window.location.href = `/route-mapbox?stops=${payload}`;
+  }
 
-  const points = useMemo(() => {
-    return selectedStops.map((d) => ({ lat: d.lat as number, lng: d.lng as number }));
-  }, [selectedStops]);
+  function buildStopsFromRoute(route: RouteRow) {
+    // 1) se já existe route.stops
+    if (Array.isArray(route.stops) && route.stops.length) {
+      return route.stops
+        .map((s, idx) => ({
+          lat: Number(s.lat),
+          lng: Number(s.lng),
+          label: s.label || `Parada ${idx + 1}`,
+        }))
+        .filter((s) => Number.isFinite(s.lat) && Number.isFinite(s.lng));
+    }
 
-  const center = useMemo(() => {
-    if (points.length > 0) return points[0];
-    // fallback SP
-    return { lat: -23.55, lng: -46.63 };
-  }, [points]);
+    // 2) senão usa delivery_ids
+    const ids = Array.isArray(route.delivery_ids) ? route.delivery_ids : [];
+    const list = ids.map((id) => byId.get(id)).filter(Boolean) as DeliveryRow[];
 
-  const gmapsUrl = useMemo(() => googleMapsDirectionsUrl(points), [points]);
-
-  function toggle(id: string) {
-    setSelectedIds((prev) => ({ ...prev, [id]: !prev[id] }));
+    return list
+      .filter((d) => d.lat != null && d.lng != null)
+      .map((d, idx) => ({
+        lat: d.lat as number,
+        lng: d.lng as number,
+        label: `${idx + 1}. ${d.client_name} — ${d.order_id}`,
+      }));
   }
 
   return (
     <div className="card">
       <div className="topbar">
         <h3>Rotas</h3>
-        <button className="ghost" onClick={loadDeliveries}>
+        <button className="ghost" onClick={loadAll}>
           {loading ? "..." : "Atualizar"}
         </button>
       </div>
 
-      <p className="muted">
-        Selecione as entregas com coordenadas para aparecer no mapa. Depois clique em <b>Abrir no Google Maps</b> para navegar.
-      </p>
-
-      <div style={{ height: 360, borderRadius: 16, overflow: "hidden", marginTop: 10 }}>
-        <MapContainer center={[center.lat, center.lng]} zoom={13} style={{ height: "100%", width: "100%" }}>
-          <TileLayer attribution="&copy; OpenStreetMap" url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
-
-          {/* linha ligando pontos (visual) */}
-          {points.length >= 2 && <Polyline positions={points.map((p) => [p.lat, p.lng]) as any} />}
-
-          {/* pins */}
-          {selectedStops.map((d, idx) => (
-            <Marker key={d.id} position={[d.lat as number, d.lng as number]}>
-              <Popup>
-                <b>
-                  {idx + 1}. {d.client_name} — {d.order_id}
-                </b>
-                <div style={{ marginTop: 6 }}>{d.address_text}</div>
-                <div style={{ marginTop: 6, opacity: 0.7 }}>
-                  {d.lat}, {d.lng}
-                </div>
-              </Popup>
-            </Marker>
-          ))}
-        </MapContainer>
-      </div>
-
-      <div className="row" style={{ marginTop: 10, gap: 10, flexWrap: "wrap" }}>
-        <button
-          disabled={selectedStops.length < 2}
-          onClick={() => {
-            if (!gmapsUrl) return;
-            window.open(gmapsUrl, "_blank");
-          }}
-        >
-          Abrir no Google Maps
-        </button>
-
-        <span className="muted">
-          Selecionadas: <b>{selectedStops.length}</b> / {withCoords.length} com coordenadas
-        </span>
-      </div>
-
-      <h4 style={{ marginTop: 16 }}>Entregas com coordenadas</h4>
-
       <div className="list">
-        {withCoords.map((d) => (
-          <div key={d.id} className="item row space" style={{ alignItems: "center" }}>
-            <div className="col" style={{ gap: 4 }}>
-              <b>
-                {d.priority === "urgente" ? "🚨 " : ""}{d.client_name} — {d.order_id}
-              </b>
-              <div className="muted" style={{ fontSize: 13 }}>{d.address_text}</div>
-              <div className="muted" style={{ fontSize: 12 }}>
-                {d.lat}, {d.lng}
+        {routes.map((r) => {
+          const stops = buildStopsFromRoute(r);
+          const canOpen = stops.length >= 2;
+
+          return (
+            <div key={r.id} className="item col">
+              <div className="row space">
+                <b>{r.name || "Rota"}</b>
+                <span className="muted">~{r.total_est_km ?? "?"} km</span>
+              </div>
+
+              <ol style={{ marginTop: 8 }}>
+                {stops.map((s, idx) => (
+                  <li key={idx}>
+                    {s.label}
+                    <div className="muted" style={{ fontSize: 12 }}>
+                      {s.lat}, {s.lng}
+                    </div>
+                  </li>
+                ))}
+              </ol>
+
+              <div className="row" style={{ gap: 10, marginTop: 10, flexWrap: "wrap" }}>
+                <button className="ghost" disabled={!canOpen} onClick={() => openMapbox(stops)}>
+                  Ver no Mapbox
+                </button>
+
+                {!canOpen && (
+                  <span className="muted">
+                    Precisa de pelo menos 2 paradas com coordenadas.
+                  </span>
+                )}
               </div>
             </div>
+          );
+        })}
 
-            <button className={selectedIds[d.id] ? "" : "ghost"} onClick={() => toggle(d.id)}>
-              {selectedIds[d.id] ? "Selecionado" : "Selecionar"}
-            </button>
-          </div>
-        ))}
-
-        {withCoords.length === 0 && (
-          <p className="muted">
-            Nenhuma entrega com coordenadas ainda. Use “Definir coordenadas” nas entregas para habilitar o mapa.
-          </p>
-        )}
+        {routes.length === 0 && <p className="muted">Nenhuma rota ainda.</p>}
       </div>
     </div>
   );
