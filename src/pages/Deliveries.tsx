@@ -36,10 +36,13 @@ async function fetchViaCep(cep: string): Promise<ViaCepResp | null> {
 async function geocode(q: string) {
   const resp = await fetch(`/.netlify/functions/geocode?q=${encodeURIComponent(q)}`);
   const j = await resp.json();
+
   if (!j?.found) return null;
+
   const lat = Number(j.lat);
   const lng = Number(j.lng);
   if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+
   return { lat, lng, display: j.display_name as string | undefined };
 }
 
@@ -50,7 +53,6 @@ export default function Deliveries() {
   const [clientName, setClientName] = useState("");
   const [orderId, setOrderId] = useState("");
 
-  // ✅ novos campos melhores
   const [cep, setCep] = useState("");
   const [numero, setNumero] = useState("");
   const [complemento, setComplemento] = useState("");
@@ -58,7 +60,6 @@ export default function Deliveries() {
 
   const [priority, setPriority] = useState<"normal" | "urgente">("normal");
 
-  // lat/lng continuam opcionais (pra ajustar manualmente se quiser)
   const [lat, setLat] = useState("");
   const [lng, setLng] = useState("");
 
@@ -81,6 +82,7 @@ export default function Deliveries() {
 
   async function load() {
     setLoading(true);
+
     const user = await getUserOrAlert();
     if (!user) {
       setLoading(false);
@@ -114,43 +116,41 @@ export default function Deliveries() {
     let latNum = lat ? Number(lat) : null;
     let lngNum = lng ? Number(lng) : null;
 
-    // ✅ Monta endereço final (com CEP/Número se tiver)
+    // 1) Monta endereço final
     let finalAddress = addressText.trim();
 
-    // Se tiver CEP, tenta pegar rua/cidade/UF automaticamente
     const vc = await fetchViaCep(cep);
+
+    // se tem CEP, eu recomendo exigir número para ficar preciso
     if (vc?.logradouro && vc.localidade && vc.uf) {
-      const parts = [
-        vc.logradouro,
-        numero ? `, ${numero}` : "",
-        vc.bairro ? ` - ${vc.bairro}` : "",
-        `, ${vc.localidade} - ${vc.uf}`,
-        ", Brasil"
-      ].join("");
-
-      finalAddress = parts.replace(/\s+/g, " ").trim();
-
-      if (complemento.trim()) {
-        finalAddress = `${finalAddress} (${complemento.trim()})`;
+      if (!numero.trim()) {
+        return alert("Para usar CEP, preencha o NÚMERO (senão não acha coordenadas certo).");
       }
+
+      const base = `${vc.logradouro}, ${numero.trim()}${vc.bairro ? " - " + vc.bairro : ""}, ${vc.localidade} - ${vc.uf}, Brasil`;
+      finalAddress = complemento.trim() ? `${base} (${complemento.trim()})` : base;
     } else {
-      // Sem ViaCEP, tenta melhorar a string mínima (Brasil ajuda)
-      if (finalAddress && !/brasil/i.test(finalAddress)) {
-        finalAddress = `${finalAddress}, Brasil`;
+      // sem CEP: reforça a string
+      if (!finalAddress) {
+        return alert("Preencha Endereço OU CEP+Número.");
       }
+      if (!/brasil/i.test(finalAddress)) finalAddress = `${finalAddress}, Brasil`;
     }
 
-    // ✅ Geocoding automático se não tiver lat/lng
+    // 2) Geocode se não tiver lat/lng manual
     if ((latNum == null || lngNum == null) && finalAddress) {
       const geo = await geocode(finalAddress);
+
       if (!geo) {
+        // aqui vai a prova do que foi buscado (pra você corrigir)
         return alert(
           "Não encontrei coordenadas.\n\n" +
-            "Tente assim:\n" +
-            "Rua X, 123 - Bairro, Cidade - UF\n" +
-            "ou preencha CEP + Número."
+            "Endereço enviado para busca:\n" +
+            finalAddress +
+            "\n\nDica: use CEP + Número (mais certeiro)."
         );
       }
+
       latNum = geo.lat;
       lngNum = geo.lng;
     }
@@ -159,7 +159,7 @@ export default function Deliveries() {
       user_id: user.id,
       client_name: clientName.trim(),
       order_id: orderId.trim(),
-      address_text: finalAddress || addressText.trim(),
+      address_text: finalAddress,
       priority,
       lat: latNum,
       lng: lngNum
@@ -167,7 +167,6 @@ export default function Deliveries() {
 
     if (error) return alert("Erro ao salvar entrega: " + error.message);
 
-    // limpa
     setClientName("");
     setOrderId("");
     setCep("");
@@ -184,6 +183,7 @@ export default function Deliveries() {
 
   async function remove(id: string) {
     if (!confirm("Excluir entrega?")) return;
+
     const user = await getUserOrAlert();
     if (!user) return;
 
@@ -201,9 +201,7 @@ export default function Deliveries() {
     <div className="card">
       <div className="topbar">
         <h3>Entregas</h3>
-        <button className="ghost" onClick={load}>
-          {loading ? "..." : "Atualizar"}
-        </button>
+        <button className="ghost" onClick={load}>{loading ? "..." : "Atualizar"}</button>
       </div>
 
       <div className="grid">
@@ -213,24 +211,16 @@ export default function Deliveries() {
         <label>Pedido/ID</label>
         <input value={orderId} onChange={(e) => setOrderId(e.target.value)} />
 
-        <label>CEP (opcional, recomendado)</label>
-        <input
-          value={cep}
-          onChange={(e) => setCep(e.target.value)}
-          placeholder="00000-000"
-        />
+        <label>CEP (recomendado)</label>
+        <input value={cep} onChange={(e) => setCep(e.target.value)} placeholder="00000-000" />
 
-        <label>Número (recomendado se usar CEP)</label>
+        <label>Número (obrigatório se usar CEP)</label>
         <input value={numero} onChange={(e) => setNumero(e.target.value)} placeholder="123" />
 
-        <label>Complemento (opcional)</label>
-        <input
-          value={complemento}
-          onChange={(e) => setComplemento(e.target.value)}
-          placeholder="apto, bloco, fundos..."
-        />
+        <label>Complemento</label>
+        <input value={complemento} onChange={(e) => setComplemento(e.target.value)} placeholder="apto, bloco, fundos..." />
 
-        <label>Endereço (texto livre, opcional se usar CEP)</label>
+        <label>Endereço (texto livre)</label>
         <textarea
           value={addressText}
           onChange={(e) => setAddressText(e.target.value)}
@@ -258,18 +248,11 @@ export default function Deliveries() {
         {items.map((d) => (
           <div key={d.id} className="item col">
             <div className="row space">
-              <b>
-                {d.priority === "urgente" ? "🚨 " : ""}
-                {d.client_name} — {d.order_id}
-              </b>
-              <button className="ghost" onClick={() => remove(d.id)}>
-                Excluir
-              </button>
+              <b>{d.priority === "urgente" ? "🚨 " : ""}{d.client_name} — {d.order_id}</b>
+              <button className="ghost" onClick={() => remove(d.id)}>Excluir</button>
             </div>
             <div className="muted">{d.address_text}</div>
-            <div className="muted">
-              lat/lng: {d.lat ?? "—"} , {d.lng ?? "—"}
-            </div>
+            <div className="muted">lat/lng: {d.lat ?? "—"} , {d.lng ?? "—"}</div>
           </div>
         ))}
         {items.length === 0 && <p className="muted">Nenhuma entrega ainda.</p>}
