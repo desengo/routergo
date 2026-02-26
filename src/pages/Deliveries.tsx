@@ -46,6 +46,22 @@ async function geocode(q: string) {
   return { lat, lng, display: j.display_name as string | undefined };
 }
 
+// ✅ fallback: pega coordenada do CEP pela BrasilAPI (zero custo)
+async function geoByCepBrasilApi(cep: string) {
+  const c = onlyDigits(cep);
+  if (c.length !== 8) return null;
+
+  const r = await fetch(`https://brasilapi.com.br/api/cep/v2/${c}`);
+  if (!r.ok) return null;
+  const j: any = await r.json();
+
+  const lat = Number(j?.location?.coordinates?.latitude);
+  const lng = Number(j?.location?.coordinates?.longitude);
+
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+  return { lat, lng };
+}
+
 export default function Deliveries() {
   const [items, setItems] = useState<Row[]>([]);
   const [loading, setLoading] = useState(false);
@@ -53,23 +69,19 @@ export default function Deliveries() {
   const [clientName, setClientName] = useState("");
   const [orderId, setOrderId] = useState("");
 
-  // CEP e número
   const [cep, setCep] = useState("");
   const [numero, setNumero] = useState("");
   const [complemento, setComplemento] = useState("");
 
-  // Endereço vindo do ViaCEP (read-only)
   const [rua, setRua] = useState("");
   const [bairro, setBairro] = useState("");
   const [cidade, setCidade] = useState("");
   const [uf, setUf] = useState("");
 
-  // Endereço livre (fallback)
   const [addressText, setAddressText] = useState("");
 
   const [priority, setPriority] = useState<"normal" | "urgente">("normal");
 
-  // Lat/Lng opcional (ajuste manual)
   const [lat, setLat] = useState("");
   const [lng, setLng] = useState("");
 
@@ -115,7 +127,7 @@ export default function Deliveries() {
     load();
   }, []);
 
-  // ✅ Auto-busca ViaCEP quando completar 8 dígitos
+  // ✅ Auto ViaCEP quando completar 8 dígitos
   useEffect(() => {
     const c = onlyDigits(cep);
     if (c.length !== 8) return;
@@ -123,7 +135,6 @@ export default function Deliveries() {
     (async () => {
       const vc = await fetchViaCep(c);
       if (!vc?.logradouro || !vc.localidade || !vc.uf) {
-        // limpa se não achou
         setRua("");
         setBairro("");
         setCidade("");
@@ -139,17 +150,13 @@ export default function Deliveries() {
   }, [cep]);
 
   function buildAddressFromCep() {
-    // monta endereço "forte"
-    const parts: string[] = [];
-    if (rua) parts.push(rua);
-    if (numero.trim()) parts[parts.length - 1] = `${parts[parts.length - 1]}, ${numero.trim()}`;
-    if (bairro) parts.push(`- ${bairro}`);
-    if (cidade && uf) parts.push(`, ${cidade} - ${uf}`);
-    parts.push(", Brasil");
+    const num = numero.trim();
+    const comp = complemento.trim();
 
-    let base = parts.join(" ").replace(/\s+/g, " ").trim();
-    if (complemento.trim()) base = `${base} (${complemento.trim()})`;
-    return base;
+    // endereço forte para geocode
+    let base = `${rua}${num ? `, ${num}` : ""}${bairro ? ` - ${bairro}` : ""}, ${cidade} - ${uf}, Brasil`;
+    if (comp) base += ` (${comp})`;
+    return base.replace(/\s+/g, " ").trim();
   }
 
   async function add() {
@@ -163,18 +170,14 @@ export default function Deliveries() {
     let latNum = lat ? Number(lat) : null;
     let lngNum = lng ? Number(lng) : null;
 
-    // 1) Decide qual endereço usar
-    // Preferência: CEP (ViaCEP) -> fallback: endereço livre
-    let finalAddress = "";
-
     const c = onlyDigits(cep);
     const hasCepAddress = c.length === 8 && rua && cidade && uf;
 
+    let finalAddress = "";
+
     if (hasCepAddress) {
-      // ✅ endereço vindo do CEP
       finalAddress = buildAddressFromCep();
     } else {
-      // fallback: texto livre
       if (!addressText.trim()) {
         return alert("Informe CEP válido (8 dígitos) OU preencha o Endereço (texto).");
       }
@@ -182,30 +185,30 @@ export default function Deliveries() {
       if (!/brasil/i.test(finalAddress)) finalAddress = `${finalAddress}, Brasil`;
     }
 
-    // 2) Geocode automático se não tiver lat/lng manual
+    // ✅ 1) tenta geocode por endereço completo
     if ((latNum == null || lngNum == null) && finalAddress) {
       const geo = await geocode(finalAddress);
-
-      if (!geo) {
-        // Se veio do CEP mas sem número, ainda pode falhar dependendo do logradouro.
-        // Então damos instrução clara.
-        if (hasCepAddress && !numero.trim()) {
-          return alert(
-            "Achei o endereço pelo CEP, mas não consegui localizar no mapa.\n\n" +
-              "Dica: informe o NÚMERO para ficar preciso."
-          );
-        }
-
-        return alert(
-          "Não encontrei coordenadas.\n\n" +
-            "Endereço usado:\n" +
-            finalAddress +
-            "\n\nDica: use CEP + NÚMERO."
-        );
+      if (geo) {
+        latNum = geo.lat;
+        lngNum = geo.lng;
       }
+    }
 
-      latNum = geo.lat;
-      lngNum = geo.lng;
+    // ✅ 2) fallback: se falhou e tem CEP, pega lat/lng do CEP (aproximado)
+    if ((latNum == null || lngNum == null) && c.length === 8) {
+      const byCep = await geoByCepBrasilApi(c);
+      if (byCep) {
+        latNum = byCep.lat;
+        lngNum = byCep.lng;
+      }
+    }
+
+    // ✅ se mesmo assim não achou, aí sim alerta
+    if (latNum == null || lngNum == null) {
+      return alert(
+        "Não encontrei coordenadas nem pelo endereço nem pelo CEP.\n\n" +
+          "Tente outro CEP ou confira se o CEP está correto."
+      );
     }
 
     const { error } = await supabase.from("deliveries").insert({
@@ -220,7 +223,6 @@ export default function Deliveries() {
 
     if (error) return alert("Erro ao salvar entrega: " + error.message);
 
-    // limpar
     setClientName("");
     setOrderId("");
     setCep("");
@@ -270,14 +272,10 @@ export default function Deliveries() {
         <input value={orderId} onChange={(e) => setOrderId(e.target.value)} />
 
         <label>CEP</label>
-        <input
-          value={cep}
-          onChange={(e) => setCep(e.target.value)}
-          placeholder="04821-450"
-        />
+        <input value={cep} onChange={(e) => setCep(e.target.value)} placeholder="04821-450" />
 
         <label>Número (recomendado)</label>
-        <input value={numero} onChange={(e) => setNumero(e.target.value)} placeholder="42" />
+        <input value={numero} onChange={(e) => setNumero(e.target.value)} placeholder="484" />
 
         <label>Complemento</label>
         <input value={complemento} onChange={(e) => setComplemento(e.target.value)} placeholder="apto, bloco..." />
