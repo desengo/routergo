@@ -1,5 +1,5 @@
 {
-  "name": "routergo-mapbox",
+  "name": "routergo",
   "private": true,
   "version": "1.0.0",
   "type": "module",
@@ -9,6 +9,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.45.4",
     "mapbox-gl": "^3.5.2",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
