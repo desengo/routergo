@@ -1,27 +1,37 @@
-:root {
-  --bg: #0f0f12;
-  --card: #17171c;
-  --muted: #9a9aa3;
-  --border: #26262e;
-  --accent: #ffffff;
-}
+/* ============================= */
+/* ROUTERGO – GREEN TECH THEME  */
+/* ============================= */
 
-* {
-  box-sizing: border-box;
+:root {
+  --bg-main: #061b0f;
+  --bg-card: #0c2618;
+  --bg-card-2: #0f2f1e;
+
+  --green-1: #00ff7f;
+  --green-2: #00e676;
+  --green-3: #00c853;
+  --green-soft: #2aff9c;
+
+  --text-main: #eafff5;
+  --text-muted: #6affb8;
 }
 
 body {
   margin: 0;
-  font-family: system-ui, -apple-system, sans-serif;
-  background: var(--bg);
-  color: white;
+  background: radial-gradient(circle at 20% 20%, #0f2f1e 0%, #061b0f 60%);
+  font-family: Arial, Helvetica, sans-serif;
+  color: var(--text-main);
 }
+
+/* ================= WRAPPER ================= */
 
 .wrap {
   max-width: 900px;
-  margin: 0 auto;
+  margin: auto;
   padding: 20px;
 }
+
+/* ================= TOPBAR ================= */
 
 .topbar {
   display: flex;
@@ -30,6 +40,15 @@ body {
   margin-bottom: 16px;
 }
 
+.topbar h2,
+.topbar h3 {
+  margin: 0;
+  color: var(--green-1);
+  letter-spacing: 1px;
+}
+
+/* ================= TABS ================= */
+
 .tabs {
   display: flex;
   gap: 10px;
@@ -37,100 +56,122 @@ body {
 }
 
 .tabs button {
+  background: var(--bg-card);
+  border: 1px solid var(--green-3);
+  color: var(--green-2);
   padding: 10px 16px;
-  border-radius: 12px;
-  border: none;
-  background: #2a2a33;
-  color: white;
+  border-radius: 8px;
   cursor: pointer;
+  transition: 0.2s ease;
 }
 
-.tabs button.on {
-  background: white;
-  color: black;
-  font-weight: bold;
+.tabs button.on,
+.tabs button:hover {
+  background: var(--green-3);
+  color: #000;
+  box-shadow: 0 0 10px var(--green-2);
 }
+
+/* ================= CARD ================= */
 
 .card {
-  background: var(--card);
+  background: var(--bg-card);
+  border: 1px solid var(--green-3);
+  border-radius: 14px;
   padding: 20px;
-  border-radius: 18px;
-  border: 1px solid var(--border);
+  box-shadow: 0 0 15px rgba(0, 255, 120, 0.15);
 }
 
-.grid {
+/* ================= LIST ================= */
+
+.list {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 14px;
 }
 
-.grid label {
-  font-size: 14px;
-  color: var(--muted);
+.item {
+  background: var(--bg-card-2);
+  padding: 14px;
+  border-radius: 10px;
+  border: 1px solid rgba(0, 255, 120, 0.2);
 }
 
-.grid input,
-.grid textarea,
-.grid select {
-  width: 100%;
-  padding: 12px;
-  border-radius: 12px;
-  border: 1px solid var(--border);
-  background: #1d1d24;
-  color: white;
-  font-size: 14px;
-}
+/* ================= BUTTONS ================= */
 
-textarea {
-  resize: vertical;
-  min-height: 70px;
-}
-
-button {
-  padding: 12px 18px;
-  border-radius: 12px;
+button,
+a.ghost {
+  background: var(--green-3);
   border: none;
-  background: white;
-  color: black;
-  font-weight: 600;
+  color: #000;
+  padding: 8px 14px;
+  border-radius: 6px;
   cursor: pointer;
+  font-weight: bold;
+  transition: 0.2s ease;
 }
 
-button.ghost {
-  background: #2a2a33;
-  color: white;
+button:hover,
+a.ghost:hover {
+  background: var(--green-1);
+  box-shadow: 0 0 12px var(--green-1);
+}
+
+button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* ================= INPUT ================= */
+
+input,
+select {
+  width: 100%;
+  padding: 10px;
+  background: #03140a;
+  border: 1px solid var(--green-3);
+  border-radius: 6px;
+  color: var(--green-1);
+  margin-top: 4px;
+}
+
+input:focus {
+  outline: none;
+  border-color: var(--green-1);
+  box-shadow: 0 0 8px var(--green-1);
+}
+
+/* ================= GRID ================= */
+
+.grid2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
 }
 
 .row {
   display: flex;
-  gap: 10px;
+  align-items: center;
 }
 
 .space {
   justify-content: space-between;
 }
 
-.list {
-  margin-top: 15px;
+.col {
   display: flex;
   flex-direction: column;
-  gap: 12px;
-}
-
-.item {
-  background: #1d1d24;
-  padding: 12px;
-  border-radius: 12px;
-  border: 1px solid var(--border);
 }
 
 .muted {
-  color: var(--muted);
-  font-size: 13px;
+  color: var(--text-muted);
+  font-size: 14px;
 }
 
-.link {
-  color: #5aa9ff;
-  text-decoration: none;
-  font-size: 14px;
+/* ================= MAPBOX FIX ================= */
+
+.mapboxgl-popup-content {
+  background: #021208;
+  color: var(--green-1);
+  border: 1px solid var(--green-3);
 }
