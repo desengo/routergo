@@ -1,10 +1,22 @@
 import { createClient } from "@supabase/supabase-js";
 
-const url = import.meta.env.VITE_SUPABASE_URL as string | undefined;
-const anon = import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined;
+const supabaseUrl = import.meta.env.VITE_SUPABASE_URL!;
+const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY!;
 
-if (!url || !anon) {
-  throw new Error("Defina VITE_SUPABASE_URL e VITE_SUPABASE_ANON_KEY no Netlify.");
+if (!supabaseUrl || !supabaseAnonKey) {
+  throw new Error("Supabase env vars missing");
 }
 
-export const supabase = createClient(url, anon);
+export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
+  auth: {
+    persistSession: true,
+    autoRefreshToken: true,
+    detectSessionInUrl: true,
+    storage: localStorage
+  },
+  global: {
+    headers: {
+      "X-Client-Info": "routergo"
+    }
+  }
+});
