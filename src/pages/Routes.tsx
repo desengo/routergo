@@ -13,13 +13,10 @@ type DeliveryRow = {
 
 type RouteStop = { lat: number; lng: number; label: string; delivery_id?: string };
 
-type RouteRow = {
-  id: string;
-  user_id: string;
-  name: string | null;
-  stops: RouteStop[] | null;
-  total_est_km: number | null;
-  created_at?: string;
+type RoutePreview = {
+  name: string;
+  stops: RouteStop[];
+  totalKm: number;
 };
 
 function toNum(v: any) {
@@ -46,7 +43,6 @@ function orderNearestNeighbor(points: RouteStop[]) {
   const remaining = [...points];
   const ordered: RouteStop[] = [];
 
-  // começa pelo 1º
   let current = remaining.shift()!;
   ordered.push(current);
 
@@ -83,7 +79,7 @@ function totalDistanceKm(stops: RouteStop[]) {
   return sum;
 }
 
-// Agrupamento simples por raio: pega um ponto, puxa vizinhos próximos até encher a rota
+// agrupa por raio: pega 1, junta vizinhos próximos até encher
 function clusterByRadius(stops: RouteStop[], radiusKm: number, maxStops: number) {
   const remaining = [...stops];
   const groups: RouteStop[][] = [];
@@ -92,18 +88,14 @@ function clusterByRadius(stops: RouteStop[], radiusKm: number, maxStops: number)
     const seed = remaining.shift()!;
     const group: RouteStop[] = [seed];
 
-    // tenta adicionar os mais próximos do seed
     for (let i = 0; i < remaining.length && group.length < maxStops; ) {
       const d = haversineKm(
         { lat: seed.lat, lng: seed.lng },
         { lat: remaining[i].lat, lng: remaining[i].lng }
       );
 
-      if (d <= radiusKm) {
-        group.push(remaining.splice(i, 1)[0]);
-      } else {
-        i++;
-      }
+      if (d <= radiusKm) group.push(remaining.splice(i, 1)[0]);
+      else i++;
     }
 
     groups.push(group);
@@ -112,19 +104,45 @@ function clusterByRadius(stops: RouteStop[], radiusKm: number, maxStops: number)
   return groups;
 }
 
+function googleMapsRouteUrl(stops: RouteStop[]) {
+  // Google Maps: origin + destination + waypoints
+  // https://www.google.com/maps/dir/?api=1&origin=lat,lng&destination=lat,lng&waypoints=lat,lng|lat,lng
+  if (stops.length < 2) return "#";
+
+  const origin = `${stops[0].lat},${stops[0].lng}`;
+  const destination = `${stops[stops.length - 1].lat},${stops[stops.length - 1].lng}`;
+
+  const waypoints = stops
+    .slice(1, -1)
+    .map((s) => `${s.lat},${s.lng}`)
+    .join("|");
+
+  const params = new URLSearchParams({
+    api: "1",
+    origin,
+    destination,
+  });
+
+  if (waypoints) params.set("waypoints", waypoints);
+
+  return `https://www.google.com/maps/dir/?${params.toString()}`;
+}
+
 export default function Routes() {
   const [deliveries, setDeliveries] = useState<DeliveryRow[]>([]);
-  const [routes, setRoutes] = useState<RouteRow[]>([]);
   const [loading, setLoading] = useState(false);
+
   const [maxStops, setMaxStops] = useState<number>(5);
   const [radiusKm, setRadiusKm] = useState<number>(1.2);
+
+  const [preview, setPreview] = useState<RoutePreview[]>([]);
 
   async function getUser() {
     const { data } = await supabase.auth.getSession();
     return data.session?.user ?? null;
   }
 
-  async function loadAll() {
+  async function loadDeliveries() {
     setLoading(true);
 
     const user = await getUser();
@@ -139,23 +157,15 @@ export default function Routes() {
       .eq("user_id", user.id)
       .order("created_at", { ascending: false });
 
-    const r = await supabase
-      .from("routes")
-      .select("id,user_id,name,stops,total_est_km,created_at")
-      .eq("user_id", user.id)
-      .order("created_at", { ascending: false });
-
     setLoading(false);
 
     if (d.error) alert("Erro ao buscar entregas: " + d.error.message);
-    if (r.error) alert("Erro ao buscar rotas: " + r.error.message);
 
     setDeliveries((d.data || []) as any);
-    setRoutes((r.data || []) as any);
   }
 
   useEffect(() => {
-    loadAll();
+    loadDeliveries();
   }, []);
 
   const deliveriesWithCoords = useMemo(() => {
@@ -170,16 +180,8 @@ export default function Routes() {
     >;
   }, [deliveries]);
 
-  function openMapbox(stops: Array<{ lat: number; lng: number; label: string }>) {
-    const payload = encodeURIComponent(JSON.stringify(stops));
-    window.location.href = `/route-mapbox?stops=${payload}`;
-  }
-
-  async function gerarRotas() {
-    const user = await getUser();
-    if (!user) return;
-
-    const base = deliveriesWithCoords.map((d) => ({
+  async function gerarRotasPreview() {
+    const base: RouteStop[] = deliveriesWithCoords.map((d) => ({
       lat: d.lat,
       lng: d.lng,
       label: `${d.client_name} — ${d.address_text}`,
@@ -193,31 +195,13 @@ export default function Routes() {
 
     const groups = clusterByRadius(base, Number(radiusKm) || 1.2, Math.max(2, Number(maxStops) || 5));
 
-    setLoading(true);
+    const routes: RoutePreview[] = groups.map((g, idx) => {
+      const ordered = orderNearestNeighbor(g);
+      const totalKm = totalDistanceKm(ordered);
+      return { name: `Rota ${idx + 1}`, stops: ordered, totalKm };
+    });
 
-    // opcional: limpar rotas antigas
-    // await supabase.from("routes").delete().eq("user_id", user.id);
-
-    for (let i = 0; i < groups.length; i++) {
-      const ordered = orderNearestNeighbor(groups[i]);
-      const km = totalDistanceKm(ordered);
-
-      const { error } = await supabase.from("routes").insert({
-        user_id: user.id,
-        name: `Rota ${i + 1}`,
-        stops: ordered,
-        total_est_km: km,
-      });
-
-      if (error) {
-        setLoading(false);
-        alert("Erro ao salvar rota: " + error.message);
-        return;
-      }
-    }
-
-    setLoading(false);
-    await loadAll();
+    setPreview(routes);
   }
 
   return (
@@ -225,10 +209,10 @@ export default function Routes() {
       <div className="topbar">
         <h3>Rotas</h3>
         <div className="row" style={{ gap: 10 }}>
-          <button className="ghost" onClick={gerarRotas} disabled={loading}>
+          <button className="ghost" onClick={gerarRotasPreview} disabled={loading}>
             {loading ? "..." : "Gerar rotas"}
           </button>
-          <button className="ghost" onClick={loadAll}>
+          <button className="ghost" onClick={loadDeliveries}>
             {loading ? "..." : "Atualizar"}
           </button>
         </div>
@@ -237,61 +221,38 @@ export default function Routes() {
       <div className="grid2" style={{ marginTop: 12 }}>
         <div>
           <label className="muted">Máx paradas por rota</label>
-          <input
-            value={maxStops}
-            onChange={(e) => setMaxStops(Number(e.target.value))}
-            type="number"
-            min={2}
-          />
+          <input value={maxStops} onChange={(e) => setMaxStops(Number(e.target.value))} type="number" min={2} />
         </div>
         <div>
           <label className="muted">Raio de agrupamento (km)</label>
-          <input
-            value={radiusKm}
-            onChange={(e) => setRadiusKm(Number(e.target.value))}
-            type="number"
-            step="0.1"
-            min={0.1}
-          />
+          <input value={radiusKm} onChange={(e) => setRadiusKm(Number(e.target.value))} type="number" step="0.1" min={0.1} />
         </div>
       </div>
 
       <div className="list" style={{ marginTop: 14 }}>
-        {routes.map((r) => {
-          const stops = Array.isArray(r.stops) ? r.stops : [];
-          const canOpen = stops.length >= 2;
-
-          return (
-            <div key={r.id} className="item col">
-              <div className="row space">
-                <b>{r.name || "Rota"}</b>
-                <span className="muted">~{(r.total_est_km ?? 0).toFixed(2)} km</span>
-              </div>
-
-              <ol style={{ marginTop: 10 }}>
-                {stops.map((s, idx) => (
-                  <li key={idx}>
-                    {idx + 1}. {s.label}
-                  </li>
-                ))}
-              </ol>
-
-              <div className="row" style={{ gap: 10, marginTop: 10, flexWrap: "wrap" }}>
-                <button className="ghost" disabled={!canOpen} onClick={() => openMapbox(stops)}>
-                  Ver no Mapbox
-                </button>
-
-                {!canOpen && (
-                  <span className="muted">
-                    Precisa de pelo menos 2 paradas com coordenadas.
-                  </span>
-                )}
-              </div>
+        {preview.map((r, idx) => (
+          <div key={idx} className="item col">
+            <div className="row space">
+              <b>
+                {r.name} ~{r.totalKm} km
+              </b>
             </div>
-          );
-        })}
 
-        {routes.length === 0 && <p className="muted">Nenhuma rota ainda.</p>}
+            <ol style={{ marginTop: 10 }}>
+              {r.stops.map((s, i) => (
+                <li key={i}>{i + 1}. {s.label}</li>
+              ))}
+            </ol>
+
+            <div className="row" style={{ marginTop: 10 }}>
+              <a href={googleMapsRouteUrl(r.stops)} target="_blank" rel="noreferrer">
+                Abrir no Google Maps
+              </a>
+            </div>
+          </div>
+        ))}
+
+        {preview.length === 0 && <p className="muted">Clique em “Gerar rotas”.</p>}
       </div>
     </div>
   );
