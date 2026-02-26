@@ -1,11 +1,12 @@
 import React, { useState } from "react";
 import { supabase } from "../lib/supabase";
-import RoutesPage from "./Routes";
+import Deliveries from "./Deliveries";
+import Routes from "./Routes";
 
-type Tab = "routes";
+type Tab = "deliveries" | "routes";
 
 export default function Dashboard() {
-  const [tab, setTab] = useState<Tab>("routes");
+  const [tab, setTab] = useState<Tab>("deliveries");
 
   return (
     <div className="wrap">
@@ -17,12 +18,16 @@ export default function Dashboard() {
       </div>
 
       <div className="tabs">
+        <button className={tab === "deliveries" ? "on" : ""} onClick={() => setTab("deliveries")}>
+          📦 Entregas
+        </button>
         <button className={tab === "routes" ? "on" : ""} onClick={() => setTab("routes")}>
           🚚 Rotas
         </button>
       </div>
 
-      {tab === "routes" && <RoutesPage />}
+      {tab === "deliveries" && <Deliveries />}
+      {tab === "routes" && <Routes />}
     </div>
   );
 }
