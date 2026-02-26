@@ -1,105 +1,110 @@
-import { haversineKm } from "./geo";
+// src/lib/routing.ts
 
-export type DeliveryLite = {
-  id: string;
-  priority: "normal" | "urgente";
-  lat: number | null;
-  lng: number | null;
-  client_name: string;
-  address_text: string;
+type Point = { id: string; lat: number; lng: number };
+
+type Options = {
+  maxStops: number;   // max entregas por rota
+  clusterKm: number;  // raio de agrupamento
 };
 
-export function generateRoutesMVP(params: {
-  deliveries: DeliveryLite[];
-  maxStopsPerRoute: number;
-  clusterRadiusKm: number;
-  startPoint?: { lat: number; lng: number };
-}) {
-  const { deliveries, maxStopsPerRoute, clusterRadiusKm, startPoint } = params;
+type RouteResult = {
+  ids: string[];
+  estKm: number | null;
+};
 
-  const candidates = deliveries
-    .filter((d) => typeof d.lat === "number" && typeof d.lng === "number")
-    .slice()
-    .sort((a, b) => (a.priority === b.priority ? 0 : a.priority === "urgente" ? -1 : 1));
-
-  const unused = new Set(candidates.map((d) => d.id));
-  const byId = new Map(candidates.map((d) => [d.id, d] as const));
-  const routes: Array<{ delivery_ids: string[]; total_est_km: number }> = [];
-
-  while (unused.size > 0) {
-    const seedId = candidates.find((d) => unused.has(d.id))?.id;
-    if (!seedId) break;
-    const seed = byId.get(seedId)!;
-    unused.delete(seedId);
-
-    const cluster: DeliveryLite[] = [seed];
-
-    for (const d of candidates) {
-      if (cluster.length >= maxStopsPerRoute) break;
-      if (!unused.has(d.id)) continue;
-
-      const dist = haversineKm(
-        { lat: seed.lat!, lng: seed.lng! },
-        { lat: d.lat!, lng: d.lng! }
-      );
-
-      if (dist <= clusterRadiusKm) {
-        cluster.push(d);
-        unused.delete(d.id);
-      }
-    }
-
-    const ordered = orderNearestNeighbor(cluster, startPoint);
-    routes.push({
-      delivery_ids: ordered.map((x) => x.id),
-      total_est_km: estimateKm(ordered, startPoint)
-    });
-  }
-
-  return routes;
+function toRad(v: number) {
+  return (v * Math.PI) / 180;
 }
 
-function orderNearestNeighbor(items: DeliveryLite[], startPoint?: { lat: number; lng: number }) {
-  const remaining = items.slice();
-  const ordered: DeliveryLite[] = [];
+// Distância Haversine em KM
+export function distanceKm(a: { lat: number; lng: number }, b: { lat: number; lng: number }) {
+  const R = 6371;
+  const dLat = toRad(b.lat - a.lat);
+  const dLng = toRad(b.lng - a.lng);
+  const la1 = toRad(a.lat);
+  const la2 = toRad(b.lat);
 
-  let cur = startPoint
-    ? { lat: startPoint.lat, lng: startPoint.lng }
-    : { lat: remaining[0].lat!, lng: remaining[0].lng! };
+  const x =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.sin(dLng / 2) * Math.sin(dLng / 2) * Math.cos(la1) * Math.cos(la2);
+
+  const c = 2 * Math.atan2(Math.sqrt(x), Math.sqrt(1 - x));
+  return R * c;
+}
+
+function estimatePathKm(points: Point[]) {
+  if (points.length < 2) return 0;
+  let km = 0;
+  for (let i = 0; i < points.length - 1; i++) {
+    km += distanceKm(points[i], points[i + 1]);
+  }
+  return km;
+}
+
+// Ordenação "vizinho mais próximo" (Nearest Neighbor) — simples e funciona pro MVP
+function nearestNeighborOrder(points: Point[]) {
+  if (points.length <= 2) return points;
+
+  const remaining = [...points];
+  const ordered: Point[] = [];
+
+  // escolhe um start "mais à esquerda" (menor lng), só pra ser determinístico
+  remaining.sort((a, b) => a.lng - b.lng);
+  ordered.push(remaining.shift()!);
 
   while (remaining.length) {
+    const last = ordered[ordered.length - 1];
     let bestIdx = 0;
     let bestDist = Infinity;
 
     for (let i = 0; i < remaining.length; i++) {
-      const d = remaining[i];
-      const dist = haversineKm(cur, { lat: d.lat!, lng: d.lng! });
-      if (dist < bestDist) {
-        bestDist = dist;
+      const d = distanceKm(last, remaining[i]);
+      if (d < bestDist) {
+        bestDist = d;
         bestIdx = i;
       }
     }
 
-    const [next] = remaining.splice(bestIdx, 1);
-    ordered.push(next);
-    cur = { lat: next.lat!, lng: next.lng! };
+    ordered.push(remaining.splice(bestIdx, 1)[0]);
   }
 
   return ordered;
 }
 
-function estimateKm(items: DeliveryLite[], startPoint?: { lat: number; lng: number }) {
-  if (!items.length) return 0;
+// Agrupa por proximidade (clusterKm) e limita por maxStops
+export function generateRoutesMVP(points: Point[], options: Options): RouteResult[] {
+  const maxStops = Math.max(2, Math.floor(options.maxStops || 5));
+  const clusterKm = Math.max(0.2, Number(options.clusterKm || 1.2));
 
-  let total = 0;
-  let prev = startPoint
-    ? { lat: startPoint.lat, lng: startPoint.lng }
-    : { lat: items[0].lat!, lng: items[0].lng! };
+  const remaining = [...points];
+  const routes: RouteResult[] = [];
 
-  for (const d of items) {
-    total += haversineKm(prev, { lat: d.lat!, lng: d.lng! });
-    prev = { lat: d.lat!, lng: d.lng! };
+  while (remaining.length) {
+    // pega o próximo seed
+    const seed = remaining.shift()!;
+    const cluster: Point[] = [seed];
+
+    // puxa pontos próximos do seed até bater maxStops
+    for (let i = 0; i < remaining.length && cluster.length < maxStops; ) {
+      const p = remaining[i];
+      const d = distanceKm(seed, p);
+      if (d <= clusterKm) {
+        cluster.push(p);
+        remaining.splice(i, 1);
+      } else {
+        i++;
+      }
+    }
+
+    // ordena cluster por vizinho mais próximo
+    const ordered = nearestNeighborOrder(cluster);
+    const estKm = ordered.length >= 2 ? estimatePathKm(ordered) : null;
+
+    routes.push({
+      ids: ordered.map((p) => p.id),
+      estKm,
+    });
   }
 
-  return Math.round(total * 10) / 10;
+  return routes;
 }
