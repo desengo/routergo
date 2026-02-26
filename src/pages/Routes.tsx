@@ -1,175 +1,184 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
-import mapboxgl from "mapbox-gl";
+import React, { useEffect, useMemo, useState } from "react";
+import { supabase } from "../lib/supabase";
+import { clusterByRadius, orderNearestNeighbor, totalDistanceKm, type Stop } from "../lib/routing";
 
-type Stop = { lat: number; lng: number; label?: string };
+type DeliveryRow = {
+  id: string;
+  client_name: string;
+  order_id: string;
+  address_text: string;
+  lat: number | null;
+  lng: number | null;
+};
 
-export default function RouteMapbox() {
-  const mapEl = useRef<HTMLDivElement | null>(null);
-  const mapRef = useRef<mapboxgl.Map | null>(null);
+type RouteRow = {
+  id: string;
+  name: string | null;
+  stops: Array<{ lat: number; lng: number; label: string }> | null;
+  total_est_km: number | null;
+  created_at?: string;
+};
 
-  const [msg, setMsg] = useState("Carregando…");
-  const [km, setKm] = useState<number | null>(null);
-  const [min, setMin] = useState<number | null>(null);
+async function getUserId() {
+  const { data } = await supabase.auth.getSession();
+  return data.session?.user?.id ?? null;
+}
 
-  const stops: Stop[] = useMemo(() => {
-    try {
-      const raw = sessionStorage.getItem("routergo_stops");
-      const parsed = raw ? JSON.parse(raw) : [];
-      if (!Array.isArray(parsed)) return [];
-      return parsed
-        .map((s: any) => ({
-          lat: Number(s.lat),
-          lng: Number(s.lng),
-          label: s.label ? String(s.label) : undefined,
-        }))
-        .filter((s: Stop) => Number.isFinite(s.lat) && Number.isFinite(s.lng));
-    } catch {
-      return [];
-    }
-  }, []);
+export default function RoutesPage() {
+  const [deliveries, setDeliveries] = useState<DeliveryRow[]>([]);
+  const [routes, setRoutes] = useState<RouteRow[]>([]);
+  const [loading, setLoading] = useState(false);
+
+  const [maxStops, setMaxStops] = useState<number>(5);
+  const [radiusKm, setRadiusKm] = useState<number>(1.2);
+
+  async function loadAll() {
+    const uid = await getUserId();
+    if (!uid) return;
+
+    setLoading(true);
+
+    const d = await supabase
+      .from("deliveries")
+      .select("id,client_name,order_id,address_text,lat,lng")
+      .eq("user_id", uid);
+
+    const r = await supabase
+      .from("routes")
+      .select("id,name,stops,total_est_km,created_at")
+      .eq("user_id", uid)
+      .order("created_at", { ascending: false });
+
+    setLoading(false);
+
+    if (d.error) alert("Erro ao buscar entregas: " + d.error.message);
+    if (r.error) alert("Erro ao buscar rotas: " + r.error.message);
+
+    setDeliveries((d.data || []) as any);
+    setRoutes((r.data || []) as any);
+  }
 
   useEffect(() => {
-    const token = import.meta.env.VITE_MAPBOX_TOKEN as string | undefined;
-    if (!token) {
-      setMsg("ERRO: VITE_MAPBOX_TOKEN não configurado no Netlify.");
+    loadAll();
+  }, []);
+
+  const usableStops: Stop[] = useMemo(() => {
+    return deliveries
+      .filter((d) => d.lat != null && d.lng != null)
+      .map((d) => ({
+        lat: d.lat as number,
+        lng: d.lng as number,
+        label: `${d.client_name} — ${d.address_text}`,
+      }));
+  }, [deliveries]);
+
+  function openMapbox(stops: Array<{ lat: number; lng: number; label: string }>) {
+    sessionStorage.setItem("routergo_stops", JSON.stringify(stops));
+    window.location.href = "/route-mapbox";
+  }
+
+  async function gerarRotas() {
+    const uid = await getUserId();
+    if (!uid) return;
+
+    if (usableStops.length < 2) {
+      alert("Precisa de pelo menos 2 entregas com coordenadas para gerar rota.");
       return;
     }
-    (mapboxgl as any).accessToken = token;
 
-    if (!mapEl.current) return;
+    const groups = clusterByRadius(
+      usableStops,
+      Math.max(0.1, Number(radiusKm) || 1.2),
+      Math.max(2, Number(maxStops) || 5)
+    );
 
-    if (stops.length < 2) {
-      setMsg("Precisa de pelo menos 2 paradas (lat/lng) para desenhar a rota.");
-      const map = new mapboxgl.Map({
-        container: mapEl.current,
-        style: "mapbox://styles/mapbox/dark-v11",
-        center: [-46.6333, -23.5505],
-        zoom: 11,
+    setLoading(true);
+
+    // (opcional) apaga rotas antigas antes de gerar novamente:
+    // await supabase.from("routes").delete().eq("user_id", uid);
+
+    for (let i = 0; i < groups.length; i++) {
+      const ordered = orderNearestNeighbor(groups[i]);
+      const km = totalDistanceKm(ordered);
+
+      const ins = await supabase.from("routes").insert({
+        user_id: uid,
+        name: `Rota ${i + 1}`,
+        stops: ordered,
+        total_est_km: km,
       });
-      map.addControl(new mapboxgl.NavigationControl(), "top-right");
-      mapRef.current = map;
-      return () => map.remove();
-    }
 
-    const first = stops[0];
-
-    const map = new mapboxgl.Map({
-      container: mapEl.current,
-      style: "mapbox://styles/mapbox/dark-v11",
-      center: [first.lng, first.lat],
-      zoom: 13,
-    });
-
-    map.addControl(new mapboxgl.NavigationControl(), "top-right");
-    mapRef.current = map;
-
-    // markers numerados verdes
-    stops.forEach((s, idx) => {
-      const el = document.createElement("div");
-      el.className = "mk";
-      el.innerText = String(idx + 1);
-
-      new mapboxgl.Marker({ element: el })
-        .setLngLat([s.lng, s.lat])
-        .setPopup(new mapboxgl.Popup({ offset: 18 }).setText(s.label || `Parada ${idx + 1}`))
-        .addTo(map);
-    });
-
-    async function draw() {
-      try {
-        setMsg(`Calculando rota… Paradas: ${stops.length} (Mapbox aceita até 25)`);
-
-        const sliced = stops.slice(0, 25);
-        const coords = sliced.map((s) => `${s.lng},${s.lat}`).join(";");
-        const url =
-          `https://api.mapbox.com/directions/v5/mapbox/driving/${coords}` +
-          `?geometries=geojson&overview=full&steps=false&access_token=${encodeURIComponent(token)}`;
-
-        const res = await fetch(url);
-        const data = await res.json();
-
-        const route = data?.routes?.[0];
-        if (!route?.geometry) throw new Error(data?.message || "Sem rota retornada.");
-
-        const geometry = route.geometry;
-
-        const distKm = route.distance ? route.distance / 1000 : null;
-        const durMin = route.duration ? route.duration / 60 : null;
-        setKm(distKm ? Math.round(distKm * 10) / 10 : null);
-        setMin(durMin ? Math.round(durMin) : null);
-
-        setMsg("Rota desenhada ✅");
-
-        map.on("load", () => {
-          if (!map.getSource("route")) {
-            map.addSource("route", {
-              type: "geojson",
-              data: { type: "Feature", properties: {}, geometry },
-            });
-          } else {
-            (map.getSource("route") as any).setData({
-              type: "Feature",
-              properties: {},
-              geometry,
-            });
-          }
-
-          // contorno pra ficar bem “uber”
-          if (!map.getLayer("route-casing")) {
-            map.addLayer({
-              id: "route-casing",
-              type: "line",
-              source: "route",
-              layout: { "line-join": "round", "line-cap": "round" },
-              paint: { "line-width": 9, "line-color": "#0b1a39", "line-opacity": 0.95 },
-            });
-          }
-
-          if (!map.getLayer("route-line")) {
-            map.addLayer({
-              id: "route-line",
-              type: "line",
-              source: "route",
-              layout: { "line-join": "round", "line-cap": "round" },
-              paint: { "line-width": 6, "line-color": "#3b82f6", "line-opacity": 0.95 },
-            });
-          }
-
-          const bounds = new mapboxgl.LngLatBounds();
-          sliced.forEach((s) => bounds.extend([s.lng, s.lat]));
-          map.fitBounds(bounds, { padding: 70, maxZoom: 16 });
-        });
-      } catch (e: any) {
-        setMsg(`Erro ao calcular rota: ${e?.message || "desconhecido"}`);
+      if (ins.error) {
+        setLoading(false);
+        alert("Erro ao salvar rota: " + ins.error.message);
+        return;
       }
     }
 
-    draw();
-
-    return () => map.remove();
-  }, [stops]);
+    setLoading(false);
+    await loadAll();
+  }
 
   return (
-    <div className="wrap">
+    <div className="card">
       <div className="topbar">
-        <h2>Rota no Mapa</h2>
-        <button className="ghost" onClick={() => history.back()}>
-          Voltar
-        </button>
-      </div>
-
-      <div className="card">
-        <b>{msg}</b>
-        <div className="muted" style={{ marginTop: 6 }}>
-          {km != null && min != null ? (
-            <>Distância ~ {km} km · Duração ~ {min} min · Paradas: {stops.length}</>
-          ) : (
-            <>Paradas: {stops.length}</>
-          )}
+        <h3>Rotas</h3>
+        <div className="row" style={{ gap: 10, flexWrap: "wrap" }}>
+          <button onClick={gerarRotas} disabled={loading}>
+            {loading ? "..." : "Gerar rotas"}
+          </button>
+          <button className="ghost" onClick={loadAll}>
+            {loading ? "..." : "Atualizar"}
+          </button>
         </div>
       </div>
 
-      <div className="mapBox" ref={mapEl} />
+      <div className="grid2" style={{ marginTop: 12 }}>
+        <div>
+          <label className="muted">Máx paradas por rota</label>
+          <input type="number" min={2} value={maxStops} onChange={(e) => setMaxStops(Number(e.target.value))} />
+        </div>
+        <div>
+          <label className="muted">Raio de agrupamento (km)</label>
+          <input type="number" step="0.1" min={0.1} value={radiusKm} onChange={(e) => setRadiusKm(Number(e.target.value))} />
+        </div>
+      </div>
+
+      <div className="muted" style={{ marginTop: 10 }}>
+        Entregas com coordenadas disponíveis: <b>{usableStops.length}</b>
+      </div>
+
+      <div className="list" style={{ marginTop: 14 }}>
+        {routes.map((r) => {
+          const stops = Array.isArray(r.stops) ? r.stops : [];
+          const canOpen = stops.length >= 2;
+
+          return (
+            <div key={r.id} className="item col">
+              <div className="row space">
+                <b>{r.name || "Rota"}</b>
+                <span className="muted">~{(r.total_est_km ?? 0).toFixed(2)} km</span>
+              </div>
+
+              <ol style={{ marginTop: 10 }}>
+                {stops.map((s, idx) => (
+                  <li key={idx}>{idx + 1}. {s.label}</li>
+                ))}
+              </ol>
+
+              <div className="row" style={{ gap: 10, marginTop: 12, flexWrap: "wrap" }}>
+                <button className="ghost" disabled={!canOpen} onClick={() => openMapbox(stops)}>
+                  Ver no Mapbox
+                </button>
+
+                {!canOpen && <span className="muted">Precisa de pelo menos 2 paradas com coordenadas.</span>}
+              </div>
+            </div>
+          );
+        })}
+
+        {routes.length === 0 && <p className="muted">Nenhuma rota ainda. Gere uma rota.</p>}
+      </div>
     </div>
   );
 }
