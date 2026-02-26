@@ -1,49 +1,88 @@
-export default async (req, context) => {
+type GeocodeResult = { found: true; lat: number; lng: number; display_name?: string } | { found: false };
+
+async function tryNominatim(q: string): Promise<GeocodeResult> {
+  const url =
+    "https://nominatim.openstreetmap.org/search?" +
+    new URLSearchParams({
+      q,
+      format: "json",
+      addressdetails: "1",
+      limit: "1"
+    }).toString();
+
+  const res = await fetch(url, {
+    headers: {
+      // IMPORTANTE: Nominatim gosta de identificação real
+      "User-Agent": "routergo/1.0 (contact: routergo.app@gmail.com)",
+      "Accept": "application/json"
+    }
+  });
+
+  if (!res.ok) return { found: false };
+  const data = await res.json();
+  const first = data?.[0];
+  if (!first) return { found: false };
+
+  const lat = Number(first.lat);
+  const lng = Number(first.lon);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return { found: false };
+
+  return { found: true, lat, lng, display_name: first.display_name };
+}
+
+async function tryPhoton(q: string): Promise<GeocodeResult> {
+  const url =
+    "https://photon.komoot.io/api/?" +
+    new URLSearchParams({
+      q,
+      limit: "1",
+      lang: "pt"
+    }).toString();
+
+  const res = await fetch(url, {
+    headers: { "Accept": "application/json" }
+  });
+
+  if (!res.ok) return { found: false };
+  const data = await res.json();
+  const f = data?.features?.[0];
+  const coords = f?.geometry?.coordinates;
+  if (!coords || coords.length < 2) return { found: false };
+
+  const lng = Number(coords[0]);
+  const lat = Number(coords[1]);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return { found: false };
+
+  const display = f?.properties?.name || f?.properties?.street || f?.properties?.city;
+  return { found: true, lat, lng, display_name: display };
+}
+
+function sleep(ms: number) {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+export async function handler(event: any) {
   try {
-    const url = new URL(req.url);
-    const q = url.searchParams.get("q");
+    const q = (event.queryStringParameters?.q || "").toString().trim();
+    if (!q) return { statusCode: 400, body: JSON.stringify({ error: "Missing q" }) };
 
-    if (!q) {
-      return new Response(JSON.stringify({ error: "missing q" }), {
-        status: 400,
-        headers: { "content-type": "application/json" },
-      });
+    // 1) tenta Nominatim
+    let r = await tryNominatim(q);
+
+    // retry leve (às vezes dá rate limit / instabilidade)
+    if (!r.found) {
+      await sleep(600);
+      r = await tryNominatim(q);
     }
 
-    const nominatimUrl =
-      "https://nominatim.openstreetmap.org/search?format=json&limit=1&q=" +
-      encodeURIComponent(q);
-
-    const r = await fetch(nominatimUrl, {
-      headers: {
-        "User-Agent": "RouterGo/1.0",
-        "Accept": "application/json",
-      },
-    });
-
-    const data = await r.json();
-
-    if (!data?.length) {
-      return new Response(JSON.stringify({ error: "not_found" }), {
-        status: 404,
-        headers: { "content-type": "application/json" },
-      });
+    // 2) fallback Photon
+    if (!r.found) {
+      await sleep(300);
+      r = await tryPhoton(q);
     }
 
-    return new Response(
-      JSON.stringify({
-        lat: Number(data[0].lat),
-        lng: Number(data[0].lon),
-      }),
-      {
-        status: 200,
-        headers: { "content-type": "application/json" },
-      }
-    );
-  } catch (e) {
-    return new Response(JSON.stringify({ error: "server_error" }), {
-      status: 500,
-      headers: { "content-type": "application/json" },
-    });
+    return { statusCode: 200, body: JSON.stringify(r) };
+  } catch (e: any) {
+    return { statusCode: 500, body: JSON.stringify({ error: e?.message || "unknown" }) };
   }
-};
+}
