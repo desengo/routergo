@@ -1,138 +1,200 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import mapboxgl from "mapbox-gl";
 
-declare global {
-  interface Window {
-    mapboxgl: any;
-  }
-}
+type Stop = { lat: number; lng: number; label?: string };
 
-type Stop = { lat: number; lng: number; label: string };
-
-function parseStops(): Stop[] {
+function getStopsFromQuery(): Stop[] {
   const params = new URLSearchParams(window.location.search);
-  const raw = params.get("stops") || "[]";
+  const raw = params.get("stops");
+  if (!raw) return [];
   try {
-    const arr = JSON.parse(decodeURIComponent(raw));
-    if (!Array.isArray(arr)) return [];
-    return arr
-      .map((p: any) => ({
-        lat: Number(p.lat),
-        lng: Number(p.lng),
-        label: String(p.label || ""),
+    const parsed = JSON.parse(decodeURIComponent(raw));
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .map((s: any) => ({
+        lat: Number(s.lat),
+        lng: Number(s.lng),
+        label: typeof s.label === "string" ? s.label : undefined,
       }))
-      .filter((p: any) => Number.isFinite(p.lat) && Number.isFinite(p.lng));
+      .filter((s) => Number.isFinite(s.lat) && Number.isFinite(s.lng));
   } catch {
     return [];
   }
 }
 
 export default function RouteMapbox() {
-  const stops = useMemo(() => parseStops(), []);
-  const token = (import.meta as any).env.VITE_MAPBOX_TOKEN as string | undefined;
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const mapRef = useRef<mapboxgl.Map | null>(null);
 
-  const mapDivRef = useRef<HTMLDivElement | null>(null);
-  const [err, setErr] = useState("");
+  const [status, setStatus] = useState<string>("Carregando mapa...");
+  const [details, setDetails] = useState<string>("");
+
+  const stops = useMemo(() => getStopsFromQuery(), []);
 
   useEffect(() => {
+    const token = import.meta.env.VITE_MAPBOX_TOKEN as string | undefined;
+
     if (!token) {
-      setErr("VITE_MAPBOX_TOKEN não configurado no Netlify.");
+      setStatus("Erro: VITE_MAPBOX_TOKEN não configurado.");
+      setDetails("Configure no Netlify: VITE_MAPBOX_TOKEN = pk...");
       return;
     }
-    if (!window.mapboxgl) {
-      setErr("Mapbox GL JS não carregou. Confira o index.html (CDN).");
+
+    if (!containerRef.current) return;
+
+    if (stops.length < 2) {
+      setStatus("Erro: precisa de pelo menos 2 paradas.");
+      setDetails("A rota deve ter 2+ entregas com lat/lng.");
       return;
     }
-    if (!mapDivRef.current) return;
 
-    window.mapboxgl.accessToken = token;
+    // Mapbox token
+    mapboxgl.accessToken = token;
 
-    const center = stops.length ? [stops[0].lng, stops[0].lat] : [-46.6333, -23.5505];
-
-    const map = new window.mapboxgl.Map({
-      container: mapDivRef.current,
-      style: "mapbox://styles/mapbox/streets-v12",
-      center,
-      zoom: stops.length ? 12 : 11,
+    // Inicializa mapa
+    const map = new mapboxgl.Map({
+      container: containerRef.current,
+      style: "mapbox://styles/mapbox/dark-v11",
+      center: [stops[0].lng, stops[0].lat],
+      zoom: 12,
     });
 
-    map.addControl(new window.mapboxgl.NavigationControl());
+    mapRef.current = map;
+    map.addControl(new mapboxgl.NavigationControl(), "top-right");
 
-    map.on("load", async () => {
-      // Pins numerados
-      stops.forEach((s, i) => {
-        const el = document.createElement("div");
-        el.style.width = "28px";
-        el.style.height = "28px";
-        el.style.borderRadius = "14px";
-        el.style.background = "#111";
-        el.style.border = "2px solid #fff";
-        el.style.display = "flex";
-        el.style.alignItems = "center";
-        el.style.justifyContent = "center";
-        el.style.color = "#fff";
-        el.style.fontWeight = "700";
-        el.innerText = String(i + 1);
+    // Marcadores numerados
+    const markers: mapboxgl.Marker[] = [];
+    stops.forEach((s, idx) => {
+      const el = document.createElement("div");
+      el.className = "mbx-marker";
+      el.textContent = String(idx + 1);
 
-        new window.mapboxgl.Marker({ element: el })
-          .setLngLat([s.lng, s.lat])
-          .setPopup(new window.mapboxgl.Popup({ offset: 25 }).setHTML(`<b>${i + 1}. ${s.label}</b>`))
-          .addTo(map);
+      const popupHtml = `
+        <div>
+          <b>Parada ${idx + 1}</b><br/>
+          ${(s.label || "").replaceAll("<", "&lt;")}
+          <div style="opacity:.7;font-size:12px;margin-top:6px">${s.lat}, ${s.lng}</div>
+        </div>
+      `;
+
+      const m = new mapboxgl.Marker({ element: el })
+        .setLngLat([s.lng, s.lat])
+        .setPopup(new mapboxgl.Popup({ offset: 18 }).setHTML(popupHtml))
+        .addTo(map);
+
+      markers.push(m);
+    });
+
+    async function drawRoute() {
+      setStatus("Calculando rota (Directions)...");
+      setDetails("");
+
+      // Mapbox Directions aceita até 25 pontos
+      const sliced = stops.slice(0, 25);
+      const coords = sliced.map((s) => `${s.lng},${s.lat}`).join(";");
+
+      const r = await fetch(`/.netlify/functions/mapbox-directions?coords=${encodeURIComponent(coords)}&profile=driving`);
+      const j = await r.json();
+
+      if (!r.ok) {
+        setStatus("Erro ao calcular rota.");
+        setDetails(j?.message || j?.error || JSON.stringify(j));
+        return;
+      }
+
+      const geom = j?.routes?.[0]?.geometry;
+      if (!geom || geom.type !== "LineString" || !Array.isArray(geom.coordinates)) {
+        setStatus("Rota não retornou geometria.");
+        setDetails(JSON.stringify(j));
+        return;
+      }
+
+      // Remove camadas se existirem
+      if (map.getLayer("route-line")) map.removeLayer("route-line");
+      if (map.getLayer("route-casing")) map.removeLayer("route-casing");
+      if (map.getSource("route")) map.removeSource("route");
+
+      // Source
+      map.addSource("route", {
+        type: "geojson",
+        data: {
+          type: "Feature",
+          properties: {},
+          geometry: geom,
+        },
       });
 
-      // Rota por ruas (Directions)
-      if (stops.length >= 2) {
-        try {
-          const coordsStr = stops.map((s) => `${s.lng},${s.lat}`).join(";");
-          const r = await fetch(`/.netlify/functions/mapbox-directions?coords=${encodeURIComponent(coordsStr)}`);
-          const j = await r.json();
+      // Contorno (baixo)
+      map.addLayer({
+        id: "route-casing",
+        type: "line",
+        source: "route",
+        layout: { "line-join": "round", "line-cap": "round" },
+        paint: {
+          "line-color": "#0b1a39",
+          "line-width": 9,
+          "line-opacity": 0.95,
+        },
+      });
 
-          const geom = j?.routes?.[0]?.geometry;
-          if (geom?.type === "LineString") {
-            if (map.getSource("route")) {
-              // @ts-ignore
-              map.getSource("route").setData({ type: "Feature", geometry: geom, properties: {} });
-            } else {
-              map.addSource("route", {
-                type: "geojson",
-                data: { type: "Feature", geometry: geom, properties: {} },
-              });
+      // Linha azul (cima)
+      map.addLayer({
+        id: "route-line",
+        type: "line",
+        source: "route",
+        layout: { "line-join": "round", "line-cap": "round" },
+        paint: {
+          "line-color": "#2f7bff",
+          "line-width": 6,
+          "line-opacity": 0.95,
+        },
+      });
 
-              map.addLayer({
-                id: "route-line",
-                type: "line",
-                source: "route",
-                paint: {
-                  "line-width": 5,
-                },
-              });
-            }
-          }
-        } catch (e: any) {
-          setErr("Falha ao desenhar rota (Directions).");
-        }
-      }
+      // Fit bounds pela geometria da rota
+      const bounds = new mapboxgl.LngLatBounds();
+      for (const c of geom.coordinates) bounds.extend([c[0], c[1]]);
+      map.fitBounds(bounds, { padding: 60, duration: 700 });
+
+      const distKm = Math.round(((j?.routes?.[0]?.distance || 0) / 1000) * 10) / 10;
+      const durMin = Math.round(((j?.routes?.[0]?.duration || 0) / 60) * 1) / 1;
+
+      setStatus("Rota desenhada ✅");
+      setDetails(`Distância ~ ${distKm} km • Duração ~ ${durMin} min`);
+    }
+
+    map.on("load", () => {
+      drawRoute().catch((e: any) => {
+        setStatus("Erro ao desenhar rota.");
+        setDetails(e?.message || String(e));
+      });
     });
 
-    return () => map.remove();
-  }, [token, stops]);
+    return () => {
+      markers.forEach((m) => m.remove());
+      map.remove();
+      mapRef.current = null;
+    };
+  }, [stops]);
 
   return (
     <div className="wrap">
       <div className="topbar">
-        <h2>Rota (Mapbox)</h2>
-        <a className="ghost" href="/" style={{ textDecoration: "none" }}>
+        <h2>Rota no Mapa</h2>
+        <button className="ghost" onClick={() => window.history.back()}>
           Voltar
-        </a>
+        </button>
       </div>
 
-      {err && (
-        <div className="card">
-          <b>Erro:</b> {err}
+      <div className="card" style={{ marginBottom: 12 }}>
+        <b>{status}</b>
+        {details ? <div className="muted" style={{ marginTop: 6 }}>{details}</div> : null}
+        <div className="muted" style={{ marginTop: 6 }}>
+          Paradas: {stops.length} (Mapbox aceita até 25)
         </div>
-      )}
+      </div>
 
       <div className="card" style={{ padding: 0, overflow: "hidden" }}>
-        <div ref={mapDivRef} style={{ width: "100%", height: 420 }} />
+        <div ref={containerRef} style={{ height: "72vh", width: "100%" }} />
       </div>
     </div>
   );
