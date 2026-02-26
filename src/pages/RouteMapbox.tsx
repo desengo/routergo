@@ -3,10 +3,6 @@ import mapboxgl from "mapbox-gl";
 
 type Stop = { lat: number; lng: number; label?: string };
 
-function token() {
-  return import.meta.env.VITE_MAPBOX_TOKEN as string | undefined;
-}
-
 export default function RouteMapbox() {
   const mapEl = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<mapboxgl.Map | null>(null);
@@ -33,27 +29,18 @@ export default function RouteMapbox() {
   }, []);
 
   useEffect(() => {
-    const t = token();
-    if (!t) {
+    const token = import.meta.env.VITE_MAPBOX_TOKEN as string | undefined;
+    if (!token) {
       setMsg("ERRO: VITE_MAPBOX_TOKEN não configurado no Netlify.");
       return;
     }
-    (mapboxgl as any).accessToken = t;
+    (mapboxgl as any).accessToken = token;
 
     if (!mapEl.current) return;
 
-    if (!stops || stops.length < 2) {
-      setMsg("Precisa de pelo menos 2 paradas (lat/lng) para desenhar a rota.");
-      // ainda mostra mapa centralizado em SP
-      const map = new mapboxgl.Map({
-        container: mapEl.current,
-        style: "mapbox://styles/mapbox/dark-v11",
-        center: [-46.6333, -23.5505],
-        zoom: 11,
-      });
-      map.addControl(new mapboxgl.NavigationControl(), "top-right");
-      mapRef.current = map;
-      return () => map.remove();
+    if (stops.length < 2) {
+      setMsg("Precisa de pelo menos 2 paradas para desenhar a rota.");
+      return;
     }
 
     const first = stops[0];
@@ -64,10 +51,10 @@ export default function RouteMapbox() {
       center: [first.lng, first.lat],
       zoom: 13,
     });
+
     map.addControl(new mapboxgl.NavigationControl(), "top-right");
     mapRef.current = map;
 
-    // marcadores verdes numerados
     stops.forEach((s, idx) => {
       const el = document.createElement("div");
       el.className = "mk";
@@ -83,10 +70,12 @@ export default function RouteMapbox() {
       try {
         setMsg(`Calculando rota… Paradas: ${stops.length} (Mapbox aceita até 25)`);
 
-        const coords = stops.map((s) => `${s.lng},${s.lat}`).join(";");
+        const sliced = stops.slice(0, 25);
+        const coords = sliced.map((s) => `${s.lng},${s.lat}`).join(";");
+
         const url =
           `https://api.mapbox.com/directions/v5/mapbox/driving/${coords}` +
-          `?geometries=geojson&overview=full&steps=false&access_token=${encodeURIComponent(t)}`;
+          `?geometries=geojson&overview=full&steps=false&access_token=${encodeURIComponent(token)}`;
 
         const res = await fetch(url);
         const data = await res.json();
@@ -94,9 +83,8 @@ export default function RouteMapbox() {
         const route = data?.routes?.[0];
         if (!route?.geometry) throw new Error(data?.message || "Sem rota retornada.");
 
-        const geometry = route.geometry; // LineString GeoJSON
+        const geometry = route.geometry;
 
-        // métricas
         const distKm = route.distance ? route.distance / 1000 : null;
         const durMin = route.duration ? route.duration / 60 : null;
         setKm(distKm ? Math.round(distKm * 10) / 10 : null);
@@ -105,7 +93,6 @@ export default function RouteMapbox() {
         setMsg("Rota desenhada ✅");
 
         map.on("load", () => {
-          // source
           if (!map.getSource("route")) {
             map.addSource("route", {
               type: "geojson",
@@ -119,23 +106,28 @@ export default function RouteMapbox() {
             });
           }
 
-          // layer linha azul
+          if (!map.getLayer("route-casing")) {
+            map.addLayer({
+              id: "route-casing",
+              type: "line",
+              source: "route",
+              layout: { "line-join": "round", "line-cap": "round" },
+              paint: { "line-width": 9, "line-color": "#0b1a39", "line-opacity": 0.95 },
+            });
+          }
+
           if (!map.getLayer("route-line")) {
             map.addLayer({
               id: "route-line",
               type: "line",
               source: "route",
               layout: { "line-join": "round", "line-cap": "round" },
-              paint: {
-                "line-width": 6,
-                "line-color": "#3b82f6"
-              },
+              paint: { "line-width": 6, "line-color": "#3b82f6", "line-opacity": 0.95 },
             });
           }
 
-          // fit bounds
           const bounds = new mapboxgl.LngLatBounds();
-          stops.forEach((s) => bounds.extend([s.lng, s.lat]));
+          sliced.forEach((s) => bounds.extend([s.lng, s.lat]));
           map.fitBounds(bounds, { padding: 70, maxZoom: 16 });
         });
       } catch (e: any) {
@@ -151,8 +143,8 @@ export default function RouteMapbox() {
   return (
     <div className="wrap">
       <div className="topbar">
-        <h1 className="title">Rota no Mapa</h1>
-        <button className="btn ghost" onClick={() => history.back()}>
+        <h2>Rota no Mapa</h2>
+        <button className="ghost" onClick={() => history.back()}>
           Voltar
         </button>
       </div>
