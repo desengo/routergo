@@ -10,18 +10,18 @@ type DeliveryRow = {
   lng: number | null;
 };
 
-type RouteStop = { lat: number; lng: number; label?: string };
+type RouteStop = {
+  lat: number;
+  lng: number;
+  label?: string;
+};
 
 type RouteRow = {
   id: string;
   name: string | null;
-
-  // pode existir um desses dois:
-  delivery_ids?: string[]; // array
-  stops?: RouteStop[];     // json
-
+  delivery_ids: string[] | null;
   total_est_km: number | null;
-  created_at?: string;
+  created_at: string;
 };
 
 export default function Routes() {
@@ -48,11 +48,9 @@ export default function Routes() {
       .select("id,client_name,order_id,address_text,lat,lng")
       .eq("user_id", user.id);
 
-    // buscamos delivery_ids e stops (se existir) — o Supabase ignora colunas inexistentes?
-    // Se der erro por coluna inexistente, ajuste o select para o seu schema.
     const r = await supabase
       .from("routes")
-      .select("id,name,delivery_ids,stops,total_est_km,created_at")
+      .select("id,name,delivery_ids,total_est_km,created_at")
       .eq("user_id", user.id)
       .order("created_at", { ascending: false });
 
@@ -61,43 +59,33 @@ export default function Routes() {
     if (d.error) alert("Erro ao buscar entregas: " + d.error.message);
     if (r.error) alert("Erro ao buscar rotas: " + r.error.message);
 
-    setDeliveries((d.data || []) as any);
-    setRoutes((r.data || []) as any);
+    setDeliveries(d.data || []);
+    setRoutes(r.data || []);
   }
 
   useEffect(() => {
     loadAll();
   }, []);
 
-  const byId = useMemo(() => new Map(deliveries.map((d) => [d.id, d] as const)), [deliveries]);
+  const deliveriesById = useMemo(() => {
+    return new Map(deliveries.map((d) => [d.id, d]));
+  }, [deliveries]);
 
-  function openMapbox(stops: Array<{ lat: number; lng: number; label: string }>) {
+  function openMapbox(stops: RouteStop[]) {
     const payload = encodeURIComponent(JSON.stringify(stops));
     window.location.href = `/route-mapbox?stops=${payload}`;
   }
 
-  function buildStopsFromRoute(route: RouteRow) {
-    // 1) se já existe route.stops
-    if (Array.isArray(route.stops) && route.stops.length) {
-      return route.stops
-        .map((s, idx) => ({
-          lat: Number(s.lat),
-          lng: Number(s.lng),
-          label: s.label || `Parada ${idx + 1}`,
-        }))
-        .filter((s) => Number.isFinite(s.lat) && Number.isFinite(s.lng));
-    }
+  function buildStops(route: RouteRow): RouteStop[] {
+    if (!route.delivery_ids) return [];
 
-    // 2) senão usa delivery_ids
-    const ids = Array.isArray(route.delivery_ids) ? route.delivery_ids : [];
-    const list = ids.map((id) => byId.get(id)).filter(Boolean) as DeliveryRow[];
-
-    return list
-      .filter((d) => d.lat != null && d.lng != null)
-      .map((d, idx) => ({
+    return route.delivery_ids
+      .map((id) => deliveriesById.get(id))
+      .filter((d): d is DeliveryRow => !!d && d.lat !== null && d.lng !== null)
+      .map((d, index) => ({
         lat: d.lat as number,
         lng: d.lng as number,
-        label: `${idx + 1}. ${d.client_name} — ${d.order_id}`,
+        label: `${index + 1}. ${d.client_name} — ${d.order_id}`,
       }));
   }
 
@@ -111,15 +99,17 @@ export default function Routes() {
       </div>
 
       <div className="list">
-        {routes.map((r) => {
-          const stops = buildStopsFromRoute(r);
+        {routes.map((route) => {
+          const stops = buildStops(route);
           const canOpen = stops.length >= 2;
 
           return (
-            <div key={r.id} className="item col">
+            <div key={route.id} className="item col">
               <div className="row space">
-                <b>{r.name || "Rota"}</b>
-                <span className="muted">~{r.total_est_km ?? "?"} km</span>
+                <b>{route.name || "Rota"}</b>
+                <span className="muted">
+                  ~{route.total_est_km ?? "?"} km
+                </span>
               </div>
 
               <ol style={{ marginTop: 8 }}>
@@ -133,22 +123,28 @@ export default function Routes() {
                 ))}
               </ol>
 
-              <div className="row" style={{ gap: 10, marginTop: 10, flexWrap: "wrap" }}>
-                <button className="ghost" disabled={!canOpen} onClick={() => openMapbox(stops)}>
+              <div style={{ marginTop: 10 }}>
+                <button
+                  className="ghost"
+                  disabled={!canOpen}
+                  onClick={() => openMapbox(stops)}
+                >
                   Ver no Mapbox
                 </button>
 
                 {!canOpen && (
-                  <span className="muted">
-                    Precisa de pelo menos 2 paradas com coordenadas.
-                  </span>
+                  <div className="muted" style={{ fontSize: 12 }}>
+                    Precisa de pelo menos 2 entregas com coordenadas.
+                  </div>
                 )}
               </div>
             </div>
           );
         })}
 
-        {routes.length === 0 && <p className="muted">Nenhuma rota ainda.</p>}
+        {routes.length === 0 && (
+          <p className="muted">Nenhuma rota criada ainda.</p>
+        )}
       </div>
     </div>
   );
