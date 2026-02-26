@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { supabase } from "../lib/supabase";
 
 type Row = {
@@ -9,6 +9,7 @@ type Row = {
   priority: "normal" | "urgente";
   lat: number | null;
   lng: number | null;
+  created_at?: string;
 };
 
 type ViaCepResp = {
@@ -28,38 +29,41 @@ async function fetchViaCep(cep: string): Promise<ViaCepResp | null> {
   if (c.length !== 8) return null;
   const r = await fetch(`https://viacep.com.br/ws/${c}/json/`);
   if (!r.ok) return null;
-  const j = (await r.json()) as ViaCepResp;
-  if ((j as any).erro) return null;
-  return j;
+  const j = await r.json();
+  if (j.erro) return null;
+  return j as ViaCepResp;
 }
 
 async function geocode(q: string) {
   const resp = await fetch(`/.netlify/functions/geocode?q=${encodeURIComponent(q)}`);
   const j = await resp.json();
-
   if (!j?.found) return null;
 
   const lat = Number(j.lat);
   const lng = Number(j.lng);
   if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
 
-  return { lat, lng, display: j.display_name as string | undefined };
+  return { lat, lng };
 }
 
-// ✅ fallback: pega coordenada do CEP pela BrasilAPI (zero custo)
+// fallback: coordenada aproximada do CEP (zero custo)
 async function geoByCepBrasilApi(cep: string) {
   const c = onlyDigits(cep);
   if (c.length !== 8) return null;
 
   const r = await fetch(`https://brasilapi.com.br/api/cep/v2/${c}`);
   if (!r.ok) return null;
-  const j: any = await r.json();
 
+  const j: any = await r.json();
   const lat = Number(j?.location?.coordinates?.latitude);
   const lng = Number(j?.location?.coordinates?.longitude);
-
   if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+
   return { lat, lng };
+}
+
+function googleMapsSearchUrl(address: string) {
+  return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(address)}`;
 }
 
 export default function Deliveries() {
@@ -71,40 +75,30 @@ export default function Deliveries() {
 
   const [cep, setCep] = useState("");
   const [numero, setNumero] = useState("");
-  const [complemento, setComplemento] = useState("");
 
   const [rua, setRua] = useState("");
   const [bairro, setBairro] = useState("");
   const [cidade, setCidade] = useState("");
   const [uf, setUf] = useState("");
 
-  const [addressText, setAddressText] = useState("");
-
   const [priority, setPriority] = useState<"normal" | "urgente">("normal");
 
-  const [lat, setLat] = useState("");
-  const [lng, setLng] = useState("");
-
   async function getUserOrAlert() {
-    const {
-      data: { session },
-      error
-    } = await supabase.auth.getSession();
-
+    const { data, error } = await supabase.auth.getSession();
     if (error) {
       alert("Erro ao carregar sessão: " + error.message);
       return null;
     }
-    if (!session?.user) {
+    const user = data.session?.user ?? null;
+    if (!user) {
       alert("Sessão inválida. Saia e faça login novamente.");
       return null;
     }
-    return session.user;
+    return user;
   }
 
   async function load() {
     setLoading(true);
-
     const user = await getUserOrAlert();
     if (!user) {
       setLoading(false);
@@ -113,21 +107,21 @@ export default function Deliveries() {
 
     const { data, error } = await supabase
       .from("deliveries")
-      .select("id,client_name,order_id,address_text,priority,lat,lng")
+      .select("id,client_name,order_id,address_text,priority,lat,lng,created_at")
       .eq("user_id", user.id)
       .order("created_at", { ascending: false });
 
     setLoading(false);
 
     if (error) alert("Erro ao buscar entregas: " + error.message);
-    else setItems((data || []) as any);
+    setItems((data || []) as any);
   }
 
   useEffect(() => {
     load();
   }, []);
 
-  // ✅ Auto ViaCEP quando completar 8 dígitos
+  // Auto ViaCEP
   useEffect(() => {
     const c = onlyDigits(cep);
     if (c.length !== 8) return;
@@ -141,7 +135,6 @@ export default function Deliveries() {
         setUf("");
         return;
       }
-
       setRua(vc.logradouro || "");
       setBairro(vc.bairro || "");
       setCidade(vc.localidade || "");
@@ -149,76 +142,49 @@ export default function Deliveries() {
     })();
   }, [cep]);
 
-  function buildAddressFromCep() {
-    const num = numero.trim();
-    const comp = complemento.trim();
-
-    // endereço forte para geocode
-    let base = `${rua}${num ? `, ${num}` : ""}${bairro ? ` - ${bairro}` : ""}, ${cidade} - ${uf}, Brasil`;
-    if (comp) base += ` (${comp})`;
+  const addressFromCep = useMemo(() => {
+    const c = onlyDigits(cep);
+    if (c.length !== 8 || !rua || !cidade || !uf) return "";
+    const n = numero.trim();
+    const base = `${rua}${n ? `, ${n}` : ""}${bairro ? ` - ${bairro}` : ""}, ${cidade} - ${uf}, Brasil`;
     return base.replace(/\s+/g, " ").trim();
-  }
+  }, [cep, rua, numero, bairro, cidade, uf]);
 
   async function add() {
+    const user = await getUserOrAlert();
+    if (!user) return;
+
     if (!clientName.trim() || !orderId.trim()) {
       return alert("Preencha Cliente e Pedido/ID.");
     }
 
-    const user = await getUserOrAlert();
-    if (!user) return;
-
-    let latNum = lat ? Number(lat) : null;
-    let lngNum = lng ? Number(lng) : null;
-
-    const c = onlyDigits(cep);
-    const hasCepAddress = c.length === 8 && rua && cidade && uf;
-
-    let finalAddress = "";
-
-    if (hasCepAddress) {
-      finalAddress = buildAddressFromCep();
-    } else {
-      if (!addressText.trim()) {
-        return alert("Informe CEP válido (8 dígitos) OU preencha o Endereço (texto).");
-      }
-      finalAddress = addressText.trim();
-      if (!/brasil/i.test(finalAddress)) finalAddress = `${finalAddress}, Brasil`;
+    if (!addressFromCep) {
+      return alert("Informe um CEP válido (8 dígitos).");
     }
 
-    // ✅ 1) tenta geocode por endereço completo
-    if ((latNum == null || lngNum == null) && finalAddress) {
-      const geo = await geocode(finalAddress);
-      if (geo) {
-        latNum = geo.lat;
-        lngNum = geo.lng;
-      }
+    // 1) tenta geocode endereço completo
+    let coords = await geocode(addressFromCep);
+
+    // 2) fallback: tenta rua sem número
+    if (!coords) {
+      const noNumber = `${rua}${bairro ? ` - ${bairro}` : ""}, ${cidade} - ${uf}, Brasil`.replace(/\s+/g, " ").trim();
+      coords = await geocode(noNumber);
     }
 
-    // ✅ 2) fallback: se falhou e tem CEP, pega lat/lng do CEP (aproximado)
-    if ((latNum == null || lngNum == null) && c.length === 8) {
-      const byCep = await geoByCepBrasilApi(c);
-      if (byCep) {
-        latNum = byCep.lat;
-        lngNum = byCep.lng;
-      }
+    // 3) fallback: centro do CEP
+    if (!coords) {
+      coords = await geoByCepBrasilApi(cep);
     }
 
-    // ✅ se mesmo assim não achou, aí sim alerta
-    if (latNum == null || lngNum == null) {
-      return alert(
-        "Não encontrei coordenadas nem pelo endereço nem pelo CEP.\n\n" +
-          "Tente outro CEP ou confira se o CEP está correto."
-      );
-    }
-
+    // 4) salva SEM travar (mesmo se coords null)
     const { error } = await supabase.from("deliveries").insert({
       user_id: user.id,
       client_name: clientName.trim(),
       order_id: orderId.trim(),
-      address_text: finalAddress,
+      address_text: addressFromCep,
       priority,
-      lat: latNum,
-      lng: lngNum
+      lat: coords?.lat ?? null,
+      lng: coords?.lng ?? null,
     });
 
     if (error) return alert("Erro ao salvar entrega: " + error.message);
@@ -227,15 +193,11 @@ export default function Deliveries() {
     setOrderId("");
     setCep("");
     setNumero("");
-    setComplemento("");
     setRua("");
     setBairro("");
     setCidade("");
     setUf("");
-    setAddressText("");
     setPriority("normal");
-    setLat("");
-    setLng("");
 
     alert("Entrega salva ✅");
     load();
@@ -247,14 +209,31 @@ export default function Deliveries() {
     const user = await getUserOrAlert();
     if (!user) return;
 
+    const { error } = await supabase.from("deliveries").delete().eq("id", id).eq("user_id", user.id);
+    if (error) alert("Erro ao excluir: " + error.message);
+    else load();
+  }
+
+  async function setManualCoords(id: string) {
+    const latStr = prompt("Digite a latitude (ex: -23.550520):");
+    const lngStr = prompt("Digite a longitude (ex: -46.633308):");
+    if (!latStr || !lngStr) return;
+
+    const lat = Number(latStr.replace(",", "."));
+    const lng = Number(lngStr.replace(",", "."));
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return alert("Lat/Lng inválidos.");
+
+    const user = await getUserOrAlert();
+    if (!user) return;
+
     const { error } = await supabase
       .from("deliveries")
-      .delete()
+      .update({ lat, lng })
       .eq("id", id)
       .eq("user_id", user.id);
 
-    if (error) alert("Erro ao excluir: " + error.message);
-    else load();
+    if (error) return alert("Erro ao salvar coordenadas: " + error.message);
+    load();
   }
 
   return (
@@ -274,39 +253,17 @@ export default function Deliveries() {
         <label>CEP</label>
         <input value={cep} onChange={(e) => setCep(e.target.value)} placeholder="04821-450" />
 
-        <label>Número (recomendado)</label>
-        <input value={numero} onChange={(e) => setNumero(e.target.value)} placeholder="484" />
+        <label>Número (opcional)</label>
+        <input value={numero} onChange={(e) => setNumero(e.target.value)} placeholder="69" />
 
-        <label>Complemento</label>
-        <input value={complemento} onChange={(e) => setComplemento(e.target.value)} placeholder="apto, bloco..." />
-
-        <label>Rua (via CEP)</label>
-        <input value={rua} readOnly placeholder="(preenche automático pelo CEP)" />
-
-        <label>Bairro (via CEP)</label>
-        <input value={bairro} readOnly placeholder="(preenche automático pelo CEP)" />
-
-        <label>Cidade/UF (via CEP)</label>
-        <input value={cidade && uf ? `${cidade} - ${uf}` : ""} readOnly placeholder="(preenche automático pelo CEP)" />
-
-        <label>Endereço (texto livre – se não usar CEP)</label>
-        <textarea
-          value={addressText}
-          onChange={(e) => setAddressText(e.target.value)}
-          placeholder="Rua X, 123 - Bairro, Cidade - UF"
-        />
+        <label>Endereço (via CEP)</label>
+        <input value={addressFromCep} readOnly placeholder="Digite um CEP válido" />
 
         <label>Prioridade</label>
         <select value={priority} onChange={(e) => setPriority(e.target.value as any)}>
           <option value="normal">normal</option>
           <option value="urgente">urgente</option>
         </select>
-
-        <label>Latitude (opcional)</label>
-        <input value={lat} onChange={(e) => setLat(e.target.value)} placeholder="-23.55" />
-
-        <label>Longitude (opcional)</label>
-        <input value={lng} onChange={(e) => setLng(e.target.value)} placeholder="-46.63" />
       </div>
 
       <div className="row" style={{ marginTop: 10 }}>
@@ -314,16 +271,35 @@ export default function Deliveries() {
       </div>
 
       <div className="list" style={{ marginTop: 12 }}>
-        {items.map((d) => (
-          <div key={d.id} className="item col">
-            <div className="row space">
-              <b>{d.priority === "urgente" ? "🚨 " : ""}{d.client_name} — {d.order_id}</b>
-              <button className="ghost" onClick={() => remove(d.id)}>Excluir</button>
+        {items.map((d) => {
+          const hasCoords = Number.isFinite(d.lat as any) && Number.isFinite(d.lng as any);
+          return (
+            <div key={d.id} className="item col">
+              <div className="row space">
+                <b>
+                  {d.priority === "urgente" ? "🚨 " : ""}{d.client_name} — {d.order_id}
+                </b>
+                <button className="ghost" onClick={() => remove(d.id)}>Excluir</button>
+              </div>
+
+              <div className="muted">{d.address_text}</div>
+              <div className="muted">lat/lng: {d.lat ?? "—"} , {d.lng ?? "—"}</div>
+
+              <div className="row" style={{ gap: 8, marginTop: 8, flexWrap: "wrap" }}>
+                <a className="ghost" href={googleMapsSearchUrl(d.address_text)} target="_blank" rel="noreferrer">
+                  Abrir no Google Maps
+                </a>
+
+                {!hasCoords && (
+                  <button className="ghost" onClick={() => setManualCoords(d.id)}>
+                    Definir coordenadas
+                  </button>
+                )}
+              </div>
             </div>
-            <div className="muted">{d.address_text}</div>
-            <div className="muted">lat/lng: {d.lat ?? "—"} , {d.lng ?? "—"}</div>
-          </div>
-        ))}
+          );
+        })}
+
         {items.length === 0 && <p className="muted">Nenhuma entrega ainda.</p>}
       </div>
     </div>
