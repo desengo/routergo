@@ -184,7 +184,7 @@ export default function Routes() {
 
               <div className="row" style={{ gap: 10, marginTop: 10, flexWrap: "wrap" }}>
                 <button className="ghost" disabled={!canOpen} onClick={() => openMapbox(stops)}>
-                  Ver no Mapbox
+                  Ver Rota
                 </button>
 
                 {!canOpen && <span className="muted">Precisa de 2+ paradas com coordenadas.</span>}
