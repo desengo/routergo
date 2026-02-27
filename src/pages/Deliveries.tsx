@@ -215,9 +215,9 @@ export default function Deliveries() {
 
             <div style={{ marginTop: 8 }}>{d.address_text}</div>
 
-            <div className="muted" style={{ marginTop: 6 }}>
+           {/* <div className="muted" style={{ marginTop: 6 }}>
               lat/lng: {d.lat ?? "—"} , {d.lng ?? "—"}
-            </div>
+            </div>*/}
           </div>
         ))}
 
