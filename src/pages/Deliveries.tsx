@@ -1,226 +1,232 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useState } from "react";
 import { supabase } from "../lib/supabase";
 
+// Tipos
 type DeliveryRow = {
   id: string;
   client_name: string;
   order_id: string;
-  cep: string | null;
-  number: string | null;
   address_text: string;
   lat: number | null;
   lng: number | null;
+
+  // se você tiver no banco:
+  cep?: string | null;
+  number?: string | null;
   created_at?: string;
 };
 
-type ViaCep = {
-  cep: string;
-  logradouro: string;
-  bairro: string;
-  localidade: string;
-  uf: string;
+type ViaCepResp = {
+  cep?: string;
+  logradouro?: string;
+  bairro?: string;
+  localidade?: string;
+  uf?: string;
   erro?: boolean;
 };
+
+function onlyDigits(s: string) {
+  return (s || "").replace(/\D/g, "");
+}
 
 async function getUserId() {
   const { data } = await supabase.auth.getSession();
   return data.session?.user?.id ?? null;
 }
 
-function normCep(v: string) {
-  return (v || "").replace(/\D/g, "").slice(0, 8);
+async function buscarCep(cep: string): Promise<ViaCepResp> {
+  const clean = onlyDigits(cep);
+  if (clean.length !== 8) throw new Error("CEP inválido.");
+  const res = await fetch(`https://viacep.com.br/ws/${clean}/json/`);
+  const json = (await res.json()) as ViaCepResp;
+  if (json.erro) throw new Error("CEP não encontrado.");
+  return json;
 }
 
-async function buscarCep(cep: string): Promise<ViaCep> {
-  const clean = normCep(cep);
-  const r = await fetch(`https://viacep.com.br/ws/${clean}/json/`);
-  const j = await r.json();
-  if (j?.erro) throw new Error("CEP não encontrado.");
-  return j as ViaCep;
-}
-
-async function geocodeMapbox(addressText: string) {
-  const token = import.meta.env.VITE_MAPBOX_TOKEN as string | undefined;
+// Geocoding via Mapbox (ou o que você já usa no seu geo.ts).
+// Mantive aqui para não depender de outros arquivos.
+async function geocodeMapbox(address: string) {
+  const token = import.meta.env.VITE_MAPBOX_TOKEN || import.meta.env.VITE_MAPBOX_PUBLIC_TOKEN;
   if (!token) throw new Error("VITE_MAPBOX_TOKEN não configurado.");
-
-  const q = encodeURIComponent(addressText);
   const url =
-    `https://api.mapbox.com/geocoding/v5/mapbox.places/${q}.json` +
-    `?language=pt&limit=1&country=BR&access_token=${encodeURIComponent(token)}`;
+    `https://api.mapbox.com/geocoding/v5/mapbox.places/` +
+    `${encodeURIComponent(address)}.json?limit=1&country=br&language=pt&access_token=${token}`;
 
-  const r = await fetch(url);
-  const j = await r.json();
+  const res = await fetch(url);
+  const data = await res.json();
 
-  const feat = j?.features?.[0];
-  const center = feat?.center;
-  if (!center || center.length < 2) throw new Error("Não encontrei coordenadas para esse endereço.");
+  const feature = data?.features?.[0];
+  if (!feature?.center?.length) return null;
 
-  return { lng: Number(center[0]), lat: Number(center[1]) };
+  const [lng, lat] = feature.center;
+  return { lat: Number(lat), lng: Number(lng) };
 }
 
 export default function Deliveries() {
-  const [rows, setRows] = useState<DeliveryRow[]>([]);
-  const [loading, setLoading] = useState(false);
-
   const [clientName, setClientName] = useState("");
   const [orderId, setOrderId] = useState("");
   const [cep, setCep] = useState("");
-  const [number, setNumber] = useState(""); // pode ficar vazio
+  const [number, setNumber] = useState("");
 
-  const cepOk = useMemo(() => normCep(cep).length === 8, [cep]);
+  const [deliveries, setDeliveries] = useState<DeliveryRow[]>([]);
+  const [loading, setLoading] = useState(false);
 
-  async function load() {
-    const uid = await getUserId();
-    if (!uid) return;
+  // ✅ Controle: por padrão NÃO mostra lat/lng
+  const SHOW_COORDS = false;
 
+  async function loadDeliveries() {
     setLoading(true);
-    const q = await supabase
-      .from("deliveries")
-      .select("id,client_name,order_id,cep,number,address_text,lat,lng,created_at")
-      .eq("user_id", uid)
-      .order("created_at", { ascending: false });
-    setLoading(false);
+    try {
+      const userId = await getUserId();
+      if (!userId) return;
 
-    if (q.error) alert("Erro ao buscar entregas: " + q.error.message);
-    setRows((q.data || []) as any);
+      const { data, error } = await supabase
+        .from("deliveries")
+        .select("id,client_name,order_id,address_text,lat,lng,cep,number,created_at")
+        .eq("user_id", userId)
+        .order("created_at", { ascending: false });
+
+      if (error) throw error;
+      setDeliveries((data || []) as DeliveryRow[]);
+    } catch (e: any) {
+      alert("Erro ao buscar entregas: " + (e?.message || String(e)));
+    } finally {
+      setLoading(false);
+    }
   }
 
   useEffect(() => {
-    load();
+    loadDeliveries();
   }, []);
 
-  async function salvar() {
-    const uid = await getUserId();
-    if (!uid) return;
-
-    if (!clientName.trim()) return alert("Digite o cliente.");
-    if (!orderId.trim()) return alert("Digite o pedido.");
-    if (!cepOk) return alert("Digite um CEP válido (8 dígitos).");
-
-    setLoading(true);
-
+  async function salvarEntrega() {
     try {
-      // 1) ViaCEP
-      const dados = await buscarCep(cep);
+      setLoading(true);
 
-      if (!dados.logradouro) {
-        // CEP genérico
-        throw new Error("Esse CEP não possui logradouro. Tente outro CEP ou digite endereço manualmente.");
-      }
+      const userId = await getUserId();
+      if (!userId) throw new Error("Você precisa estar logado.");
 
-      // 2) Montar endereço (número é opcional)
-      const num = number.trim();
-      const enderecoComNumero =
-        `${dados.logradouro}, ${num || "s/n"} - ${dados.bairro}, ${dados.localidade} - ${dados.uf}, Brasil`;
+      const cleanCep = onlyDigits(cep);
+      if (cleanCep.length !== 8) throw new Error("Digite um CEP válido (8 números).");
 
-      // 3) Geocode (tenta com número; se falhar, tenta sem número)
-      let coords: { lat: number; lng: number } | null = null;
+      // ViaCEP (autocomplete)
+      const dadosCep = await buscarCep(cleanCep);
 
-      try {
-        coords = await geocodeMapbox(enderecoComNumero);
-      } catch {
-        const enderecoSemNumero =
-          `${dados.logradouro} - ${dados.bairro}, ${dados.localidade} - ${dados.uf}, Brasil`;
-        coords = await geocodeMapbox(enderecoSemNumero);
-      }
+      const rua = dadosCep.logradouro || "";
+      const bairro = dadosCep.bairro || "";
+      const cidade = dadosCep.localidade || "";
+      const uf = dadosCep.uf || "";
 
-      // 4) Salvar
-      const ins = await supabase.from("deliveries").insert({
-        user_id: uid,
-        client_name: clientName.trim(),
-        order_id: orderId.trim(),
-        cep: normCep(cep),
-        number: num || null,
-        address_text: enderecoComNumero,
-        lat: coords.lat,
-        lng: coords.lng,
-      });
+      // Monta endereço. Número é opcional (você quis assim)
+      const numeroTxt = number?.trim() ? number.trim() : "s/n";
+      const enderecoCompleto = `${rua}, ${numeroTxt} - ${bairro}, ${cidade} - ${uf}, Brasil`.replace(
+        /\s+/g,
+        " "
+      );
 
-      if (ins.error) throw ins.error;
+      // Geocode (Mapbox)
+      const coords = await geocodeMapbox(enderecoCompleto);
+
+      // Se não encontrou coords, salva mesmo (sem lat/lng)
+      const payload: any = {
+        user_id: userId,
+        client_name: clientName.trim() || "Cliente",
+        order_id: orderId.trim() || "",
+        address_text: enderecoCompleto,
+        cep: cleanCep,
+        number: number?.trim() || null,
+        lat: coords?.lat ?? null,
+        lng: coords?.lng ?? null,
+      };
+
+      const { error } = await supabase.from("deliveries").insert(payload);
+      if (error) throw error;
 
       setClientName("");
       setOrderId("");
       setCep("");
       setNumber("");
 
-      await load();
+      await loadDeliveries();
     } catch (e: any) {
-      alert(e?.message || "Erro ao salvar entrega.");
+      alert(e?.message || String(e));
     } finally {
       setLoading(false);
     }
   }
 
-  async function excluir(id: string) {
-    const uid = await getUserId();
-    if (!uid) return;
-    if (!confirm("Excluir entrega?")) return;
+  async function excluirEntrega(id: string) {
+    try {
+      setLoading(true);
+      const userId = await getUserId();
+      if (!userId) throw new Error("Você precisa estar logado.");
 
-    setLoading(true);
-    const del = await supabase.from("deliveries").delete().eq("id", id).eq("user_id", uid);
-    setLoading(false);
+      const { error } = await supabase.from("deliveries").delete().eq("id", id).eq("user_id", userId);
+      if (error) throw error;
 
-    if (del.error) alert("Erro ao excluir: " + del.error.message);
-    await load();
+      await loadDeliveries();
+    } catch (e: any) {
+      alert("Erro ao excluir: " + (e?.message || String(e)));
+    } finally {
+      setLoading(false);
+    }
   }
 
   return (
     <div className="card">
       <div className="topbar">
         <h3>Entregas</h3>
-        <button className="ghost" onClick={load}>
+        <button className="ghost" onClick={loadDeliveries}>
           {loading ? "..." : "Atualizar"}
         </button>
       </div>
 
-      <div className="grid2" style={{ marginTop: 12 }}>
-        <div>
-          <label className="muted">Cliente</label>
-          <input value={clientName} onChange={(e) => setClientName(e.target.value)} />
-        </div>
-        <div>
-          <label className="muted">Pedido</label>
-          <input value={orderId} onChange={(e) => setOrderId(e.target.value)} />
-        </div>
-        <div>
-          <label className="muted">CEP</label>
-          <input value={cep} onChange={(e) => setCep(normCep(e.target.value))} placeholder="ex: 04821450" />
-        </div>
-        <div>
-          <label className="muted">Número (opcional)</label>
-          <input value={number} onChange={(e) => setNumber(e.target.value)} placeholder="ex: 42" />
-        </div>
-      </div>
+      <label>Cliente</label>
+      <input value={clientName} onChange={(e) => setClientName(e.target.value)} />
 
-      <div className="row" style={{ gap: 10, marginTop: 12, flexWrap: "wrap" }}>
-        <button onClick={salvar} disabled={loading}>
-          {loading ? "..." : "Salvar entrega"}
+      <label>Pedido</label>
+      <input value={orderId} onChange={(e) => setOrderId(e.target.value)} />
+
+      <label>CEP</label>
+      <input value={cep} onChange={(e) => setCep(e.target.value)} placeholder="ex: 04821450" />
+
+      <label>Número (opcional)</label>
+      <input value={number} onChange={(e) => setNumber(e.target.value)} placeholder="ex: 42" />
+
+      <div className="row" style={{ marginTop: 10 }}>
+        <button onClick={salvarEntrega} disabled={loading}>
+          Salvar entrega
         </button>
-        <span className="muted">
-          * Busca ViaCEP + coordenadas Mapbox automaticamente
-        </span>
       </div>
 
-      <div className="list" style={{ marginTop: 14 }}>
-        {rows.map((d) => (
+      <p className="muted" style={{ marginTop: 10 }}>
+        * Busca ViaCEP + coordenadas Mapbox automaticamente
+      </p>
+
+      <div className="list" style={{ marginTop: 12 }}>
+        {deliveries.map((d) => (
           <div key={d.id} className="item col">
             <div className="row space">
               <b>
-                {d.client_name} — {d.order_id}
+                {d.client_name} — {d.order_id || "—"}
               </b>
-              <button className="ghost" onClick={() => excluir(d.id)} disabled={loading}>
+              <button className="ghost" onClick={() => excluirEntrega(d.id)} disabled={loading}>
                 Excluir
               </button>
             </div>
 
-            <div style={{ marginTop: 8 }}>{d.address_text}</div>
+            <div style={{ marginTop: 6 }}>{d.address_text}</div>
 
-           {/* <div className="muted">lat/lng: {d.lat}, {d.lng}</div> */}
-            </div>*/}
+            {/* ✅ AQUI: lat/lng oculto por padrão */}
+            {SHOW_COORDS && (
+              <div className="muted" style={{ marginTop: 6 }}>
+                lat/lng: {d.lat ?? "—"} , {d.lng ?? "—"}
+              </div>
+            )}
           </div>
         ))}
 
-        {rows.length === 0 && <p className="muted">Nenhuma entrega ainda.</p>}
+        {deliveries.length === 0 && <p className="muted">Nenhuma entrega ainda.</p>}
       </div>
     </div>
   );
