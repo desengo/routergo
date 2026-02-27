@@ -1,7 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { supabase } from "../lib/supabase";
 
-// Tipos
 type DeliveryRow = {
   id: string;
   client_name: string;
@@ -9,8 +8,6 @@ type DeliveryRow = {
   address_text: string;
   lat: number | null;
   lng: number | null;
-
-  // se você tiver no banco:
   cep?: string | null;
   number?: string | null;
   created_at?: string;
@@ -43,11 +40,25 @@ async function buscarCep(cep: string): Promise<ViaCepResp> {
   return json;
 }
 
-// Geocoding via Mapbox (ou o que você já usa no seu geo.ts).
-// Mantive aqui para não depender de outros arquivos.
+// Remove qualquer "lat/lng: ..." que tenha sido salvo junto no address_text
+function sanitizeAddressText(text: string) {
+  if (!text) return "";
+  // remove linhas que contenham lat/lng (variações)
+  let t = text.replace(/\n?\s*lat\/lng\s*:\s*[-\d.,\s]+/gi, "");
+  t = t.replace(/\n?\s*lat\s*\/\s*lng\s*:\s*[-\d.,\s]+/gi, "");
+  t = t.replace(/\n?\s*lat\s*:\s*[-\d.,\s]+/gi, "");
+  t = t.replace(/\n?\s*lng\s*:\s*[-\d.,\s]+/gi, "");
+  return t.trim();
+}
+
 async function geocodeMapbox(address: string) {
-  const token = import.meta.env.VITE_MAPBOX_TOKEN || import.meta.env.VITE_MAPBOX_PUBLIC_TOKEN;
+  const token =
+    import.meta.env.VITE_MAPBOX_TOKEN ||
+    import.meta.env.VITE_MAPBOX_PUBLIC_TOKEN ||
+    import.meta.env.VITE_MAPBOX_ACCESS_TOKEN;
+
   if (!token) throw new Error("VITE_MAPBOX_TOKEN não configurado.");
+
   const url =
     `https://api.mapbox.com/geocoding/v5/mapbox.places/` +
     `${encodeURIComponent(address)}.json?limit=1&country=br&language=pt&access_token=${token}`;
@@ -71,9 +82,6 @@ export default function Deliveries() {
   const [deliveries, setDeliveries] = useState<DeliveryRow[]>([]);
   const [loading, setLoading] = useState(false);
 
-  // ✅ Controle: por padrão NÃO mostra lat/lng
-  const SHOW_COORDS = false;
-
   async function loadDeliveries() {
     setLoading(true);
     try {
@@ -87,7 +95,14 @@ export default function Deliveries() {
         .order("created_at", { ascending: false });
 
       if (error) throw error;
-      setDeliveries((data || []) as DeliveryRow[]);
+
+      // Sanitiza o texto pra garantir que não aparece lat/lng “embutido”
+      const cleaned = (data || []).map((d: any) => ({
+        ...d,
+        address_text: sanitizeAddressText(d.address_text || ""),
+      }));
+
+      setDeliveries(cleaned as DeliveryRow[]);
     } catch (e: any) {
       alert("Erro ao buscar entregas: " + (e?.message || String(e)));
     } finally {
@@ -109,7 +124,6 @@ export default function Deliveries() {
       const cleanCep = onlyDigits(cep);
       if (cleanCep.length !== 8) throw new Error("Digite um CEP válido (8 números).");
 
-      // ViaCEP (autocomplete)
       const dadosCep = await buscarCep(cleanCep);
 
       const rua = dadosCep.logradouro || "";
@@ -117,17 +131,15 @@ export default function Deliveries() {
       const cidade = dadosCep.localidade || "";
       const uf = dadosCep.uf || "";
 
-      // Monta endereço. Número é opcional (você quis assim)
       const numeroTxt = number?.trim() ? number.trim() : "s/n";
-      const enderecoCompleto = `${rua}, ${numeroTxt} - ${bairro}, ${cidade} - ${uf}, Brasil`.replace(
-        /\s+/g,
-        " "
+
+      // ✅ endereço SEM coordenadas no texto
+      const enderecoCompleto = sanitizeAddressText(
+        `${rua}, ${numeroTxt} - ${bairro}, ${cidade} - ${uf}, Brasil`.replace(/\s+/g, " ")
       );
 
-      // Geocode (Mapbox)
       const coords = await geocodeMapbox(enderecoCompleto);
 
-      // Se não encontrou coords, salva mesmo (sem lat/lng)
       const payload: any = {
         user_id: userId,
         client_name: clientName.trim() || "Cliente",
@@ -161,9 +173,13 @@ export default function Deliveries() {
       const userId = await getUserId();
       if (!userId) throw new Error("Você precisa estar logado.");
 
-      const { error } = await supabase.from("deliveries").delete().eq("id", id).eq("user_id", userId);
-      if (error) throw error;
+      const { error } = await supabase
+        .from("deliveries")
+        .delete()
+        .eq("id", id)
+        .eq("user_id", userId);
 
+      if (error) throw error;
       await loadDeliveries();
     } catch (e: any) {
       alert("Erro ao excluir: " + (e?.message || String(e)));
@@ -200,7 +216,7 @@ export default function Deliveries() {
       </div>
 
       <p className="muted" style={{ marginTop: 10 }}>
-        * Busca ViaCEP + coordenadas Mapbox automaticamente
+        * Busca ViaCEP + coordenadas automaticamente
       </p>
 
       <div className="list" style={{ marginTop: 12 }}>
@@ -215,14 +231,8 @@ export default function Deliveries() {
               </button>
             </div>
 
-            <div style={{ marginTop: 6 }}>{d.address_text}</div>
-
-            {/* ✅ AQUI: lat/lng oculto por padrão */}
-            {SHOW_COORDS && (
-              <div className="muted" style={{ marginTop: 6 }}>
-                lat/lng: {d.lat ?? "—"} , {d.lng ?? "—"}
-              </div>
-            )}
+            {/* ✅ Mostra SÓ o endereço (limpo). Nunca mostra lat/lng */}
+            <div style={{ marginTop: 6 }}>{sanitizeAddressText(d.address_text || "")}</div>
           </div>
         ))}
 
