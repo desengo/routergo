@@ -31,9 +31,8 @@ export default function Login() {
 
   return (
     <div className="wrap" style={{ minHeight: "100vh", display: "grid", placeItems: "center" }}>
-      {/* “Glow” no fundo */}
+      {/* Glow verde */}
       <div
-        aria-hidden
         style={{
           position: "fixed",
           inset: 0,
@@ -42,121 +41,96 @@ export default function Login() {
             "radial-gradient(700px 420px at 90% 30%, rgba(0,180,120,.14), transparent 60%)," +
             "radial-gradient(900px 700px at 50% 110%, rgba(0,120,80,.20), transparent 60%)",
           pointerEvents: "none",
-          filter: "blur(0px)",
         }}
       />
 
       <div
         className="card"
         style={{
-          width: "min(920px, 92vw)",
+          width: "min(880px, 92vw)",
           display: "grid",
-          gridTemplateColumns: "1.2fr 1fr",
+          gridTemplateColumns: "1.1fr 1fr",
           gap: 18,
           padding: 18,
         }}
       >
-        {/* Lado esquerdo: apresentação */}
+        {/* Apresentação */}
         <div
           style={{
             borderRadius: 18,
-            padding: 18,
+            padding: 20,
             border: "1px solid rgba(0,255,140,.18)",
             background:
-              "linear-gradient(180deg, rgba(0,255,140,.10), rgba(0,0,0,.00))",
-            boxShadow: "0 0 0 1px rgba(0,0,0,.2) inset",
+              "linear-gradient(180deg, rgba(0,255,140,.08), rgba(0,0,0,.00))",
           }}
         >
-          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            <div
-              style={{
-                width: 42,
-                height: 42,
-                borderRadius: 14,
-                display: "grid",
-                placeItems: "center",
-                background: "rgba(0,255,140,.12)",
-                border: "1px solid rgba(0,255,140,.25)",
-                boxShadow: "0 0 22px rgba(0,255,140,.18)",
-                fontSize: 20,
-              }}
-            >
-              🚚
-            </div>
-            <div>
-              <div style={{ fontSize: 22, fontWeight: 800, letterSpacing: 0.2 }}>RouterGo</div>
-              <div className="muted" style={{ marginTop: 2 }}>
-                Rotas inteligentes + mapa (Mapbox)
-              </div>
-            </div>
-          </div>
-
-          <div style={{ marginTop: 14, lineHeight: 1.45 }}>
-            <div style={{ fontSize: 15, opacity: 0.95 }}>
-              Organize entregas, gere rotas e visualize no mapa com linha azul, estilo Uber.
-            </div>
-
-            <div style={{ marginTop: 12, display: "grid", gap: 10 }}>
-              <Feature icon="📦" title="Entregas" text="Cadastre e liste entregas rapidamente." />
-              <Feature icon="🧭" title="Rotas" text="Gere rotas com paradas e abra no mapa." />
-              <Feature icon="🗺️" title="Mapa" text="Veja rota desenhada com marcadores e trilha." />
-            </div>
+          <div style={{ fontSize: 26, fontWeight: 900, letterSpacing: 0.5 }}>
+            RouterGo
           </div>
 
           <div
-            className="muted"
             style={{
-              marginTop: 12,
-              fontSize: 12,
-              opacity: 0.85,
-              borderTop: "1px solid rgba(0,255,140,.12)",
-              paddingTop: 12,
+              marginTop: 10,
+              fontSize: 16,
+              opacity: 0.95,
+              lineHeight: 1.5,
             }}
           >
-            Dica: para melhores coordenadas, use CEP + número.
+            Plataforma inteligente para organizar entregas,
+            gerar rotas otimizadas e acompanhar operações
+            com precisão.
+          </div>
+
+          <div
+            style={{
+              marginTop: 18,
+              display: "grid",
+              gap: 12,
+            }}
+          >
+            <Feature title="Gestão de Entregas" text="Cadastre e organize seus pedidos rapidamente." />
+            <Feature title="Rotas Inteligentes" text="Agrupamento automático de paradas." />
+            <Feature title="Visualização em Mapa" text="Acompanhe trajetos de forma clara e estratégica." />
           </div>
         </div>
 
-        {/* Lado direito: formulário */}
+        {/* Login */}
         <div
           style={{
             borderRadius: 18,
-            padding: 18,
+            padding: 20,
+            background: "rgba(0,0,0,.25)",
             border: "1px solid rgba(255,255,255,.08)",
-            background: "rgba(0,0,0,.18)",
-            boxShadow: "0 10px 30px rgba(0,0,0,.25)",
+            boxShadow: "0 10px 30px rgba(0,0,0,.35)",
           }}
         >
-          <div style={{ marginBottom: 10 }}>
-            <div style={{ fontSize: 18, fontWeight: 800 }}>Entrar</div>
-            <div className="muted" style={{ marginTop: 4 }}>
-              Acesse sua conta para ver entregas e rotas.
-            </div>
+          <div style={{ fontSize: 20, fontWeight: 800 }}>Entrar</div>
+          <div className="muted" style={{ marginTop: 4 }}>
+            Acesse sua conta
           </div>
 
-          <label className="muted">email</label>
+          <label className="muted" style={{ marginTop: 14 }}>
+            Email
+          </label>
           <input
             value={email}
             onChange={(e) => setEmail(e.target.value)}
             placeholder="seu@email.com"
-            inputMode="email"
-            autoComplete="email"
             style={{ marginTop: 6 }}
           />
 
-          <label className="muted" style={{ marginTop: 12 }}>
-            senha
+          <label className="muted" style={{ marginTop: 14 }}>
+            Senha
           </label>
           <input
             type="password"
             value={senha}
             onChange={(e) => setSenha(e.target.value)}
             placeholder="********"
-            autoComplete="current-password"
             style={{ marginTop: 6 }}
           />
 
-          <div className="row" style={{ gap: 12, marginTop: 14, flexWrap: "wrap" }}>
+          <div className="row" style={{ gap: 12, marginTop: 18 }}>
             <button onClick={entrar} disabled={loading || !emailOk || !senha}>
               {loading ? "..." : "Entrar"}
             </button>
@@ -164,21 +138,9 @@ export default function Login() {
               Criar conta
             </button>
           </div>
-
-          <div
-            className="muted"
-            style={{
-              marginTop: 12,
-              fontSize: 12,
-              opacity: 0.85,
-            }}
-          >
-            Ao criar conta, use um email válido. (Confirmação de email pode estar desativada no Supabase.)
-          </div>
         </div>
       </div>
 
-      {/* Responsivo simples sem mexer no CSS global */}
       <style>{`
         @media (max-width: 860px) {
           .wrap > .card {
@@ -190,37 +152,19 @@ export default function Login() {
   );
 }
 
-function Feature({ icon, title, text }: { icon: string; title: string; text: string }) {
+function Feature({ title, text }: { title: string; text: string }) {
   return (
     <div
       style={{
-        display: "grid",
-        gridTemplateColumns: "34px 1fr",
-        gap: 10,
-        padding: 10,
+        padding: 12,
         borderRadius: 14,
-        border: "1px solid rgba(0,255,140,.10)",
-        background: "rgba(0,0,0,.10)",
+        border: "1px solid rgba(0,255,140,.12)",
+        background: "rgba(0,0,0,.15)",
       }}
     >
-      <div
-        style={{
-          width: 34,
-          height: 34,
-          borderRadius: 12,
-          display: "grid",
-          placeItems: "center",
-          background: "rgba(0,255,140,.12)",
-          border: "1px solid rgba(0,255,140,.18)",
-        }}
-      >
-        {icon}
-      </div>
-      <div>
-        <div style={{ fontWeight: 750, fontSize: 14 }}>{title}</div>
-        <div className="muted" style={{ fontSize: 13, marginTop: 2 }}>
-          {text}
-        </div>
+      <div style={{ fontWeight: 700 }}>{title}</div>
+      <div className="muted" style={{ fontSize: 14, marginTop: 4 }}>
+        {text}
       </div>
     </div>
   );
