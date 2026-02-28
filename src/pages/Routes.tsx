@@ -8,102 +8,47 @@ type DeliveryRow = {
   address_text: string;
   lat: number | null;
   lng: number | null;
-  priority?: string | null;
 };
 
-type RouteStop = { lat: number; lng: number; label: string };
+type RouteStop = { lat: number; lng: number; label?: string };
 
 type RouteRow = {
   id: string;
   name: string | null;
-  delivery_ids: string[] | null;
+  delivery_ids?: string[];
+  stops?: RouteStop[];
   total_est_km: number | null;
   created_at?: string;
 };
-
-function haversineKm(a: { lat: number; lng: number }, b: { lat: number; lng: number }) {
-  const R = 6371;
-  const dLat = ((b.lat - a.lat) * Math.PI) / 180;
-  const dLng = ((b.lng - a.lng) * Math.PI) / 180;
-  const sLat1 = (a.lat * Math.PI) / 180;
-  const sLat2 = (b.lat * Math.PI) / 180;
-
-  const x =
-    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-    Math.sin(dLng / 2) * Math.sin(dLng / 2) * Math.cos(sLat1) * Math.cos(sLat2);
-
-  return 2 * R * Math.asin(Math.sqrt(x));
-}
-
-function orderNearestNeighbor(points: Array<{ id: string; lat: number; lng: number }>) {
-  if (points.length <= 2) return points;
-
-  const remaining = [...points];
-  const ordered: typeof remaining = [];
-
-  let current = remaining.shift()!;
-  ordered.push(current);
-
-  while (remaining.length) {
-    let bestIdx = 0;
-    let bestDist = Infinity;
-
-    for (let i = 0; i < remaining.length; i++) {
-      const d = haversineKm(current, remaining[i]);
-      if (d < bestDist) {
-        bestDist = d;
-        bestIdx = i;
-      }
-    }
-
-    current = remaining.splice(bestIdx, 1)[0];
-    ordered.push(current);
-  }
-
-  return ordered;
-}
-
-function estimateRouteKm(ordered: Array<{ lat: number; lng: number }>) {
-  if (ordered.length < 2) return 0;
-  let sum = 0;
-  for (let i = 0; i < ordered.length - 1; i++) {
-    sum += haversineKm(ordered[i], ordered[i + 1]);
-  }
-  return sum;
-}
 
 export default function Routes() {
   const [deliveries, setDeliveries] = useState<DeliveryRow[]>([]);
   const [routes, setRoutes] = useState<RouteRow[]>([]);
   const [loading, setLoading] = useState(false);
 
-  const [maxStops, setMaxStops] = useState<number>(5);
-  const [radiusKm, setRadiusKm] = useState<number>(1.2);
-
-  async function getUserId() {
+  async function getUser() {
     const { data } = await supabase.auth.getSession();
-    return data.session?.user?.id ?? null;
+    return data.session?.user ?? null;
   }
 
   async function loadAll() {
     setLoading(true);
 
-    const userId = await getUserId();
-    if (!userId) {
+    const user = await getUser();
+    if (!user) {
       setLoading(false);
       return;
     }
 
     const d = await supabase
       .from("deliveries")
-      .select("id,client_name,order_id,address_text,lat,lng,priority")
-      .eq("user_id", userId)
-      .order("created_at", { ascending: false });
+      .select("id,client_name,order_id,address_text,lat,lng")
+      .eq("user_id", user.id);
 
     const r = await supabase
       .from("routes")
-      .select("id,name,delivery_ids,total_est_km,created_at")
-      .eq("user_id", userId)
+      .select("id,name,delivery_ids,stops,total_est_km,created_at")
+      .eq("user_id", user.id)
       .order("created_at", { ascending: false });
 
     setLoading(false);
@@ -119,9 +64,27 @@ export default function Routes() {
     loadAll();
   }, []);
 
-  const byId = useMemo(() => new Map(deliveries.map((d) => [d.id, d] as const)), [deliveries]);
+  const byId = useMemo(
+    () => new Map(deliveries.map((d) => [d.id, d] as const)),
+    [deliveries]
+  );
 
-  function buildStopsFromRoute(route: RouteRow): RouteStop[] {
+  function openMapbox(stops: Array<{ lat: number; lng: number; label: string }>) {
+    const payload = encodeURIComponent(JSON.stringify(stops));
+    window.location.href = `/route-mapbox?stops=${payload}`;
+  }
+
+  function buildStopsFromRoute(route: RouteRow) {
+    if (Array.isArray(route.stops) && route.stops.length) {
+      return route.stops
+        .map((s, idx) => ({
+          lat: Number(s.lat),
+          lng: Number(s.lng),
+          label: s.label || `Parada ${idx + 1}`,
+        }))
+        .filter((s) => Number.isFinite(s.lat) && Number.isFinite(s.lng));
+    }
+
     const ids = Array.isArray(route.delivery_ids) ? route.delivery_ids : [];
     const list = ids.map((id) => byId.get(id)).filter(Boolean) as DeliveryRow[];
 
@@ -134,165 +97,48 @@ export default function Routes() {
       }));
   }
 
-  function openMapbox(stops: RouteStop[]) {
-    const payload = encodeURIComponent(JSON.stringify(stops));
-    window.location.href = `/route-mapbox?stops=${payload}`;
-  }
-
-  async function generateRoutes() {
-    const userId = await getUserId();
-    if (!userId) return;
-
-    const points = deliveries
-      .filter((d) => Number.isFinite(d.lat as any) && Number.isFinite(d.lng as any))
-      .map((d) => ({ id: d.id, lat: d.lat as number, lng: d.lng as number }));
-
-    if (points.length < 2) {
-      alert("Precisa de pelo menos 2 entregas com coordenadas para gerar rota.");
-      return;
-    }
-
-    setLoading(true);
-
-    const remaining = [...points];
-    const groups: Array<Array<{ id: string; lat: number; lng: number }>> = [];
-
-    while (remaining.length) {
-      const seed = remaining.shift()!;
-      const group = [seed];
-
-      while (group.length < maxStops && remaining.length) {
-        let bestIdx = -1;
-        let bestDist = Infinity;
-
-        for (let i = 0; i < remaining.length; i++) {
-          let minToGroup = Infinity;
-          for (const g of group) {
-            const d = haversineKm(g, remaining[i]);
-            if (d < minToGroup) minToGroup = d;
-          }
-          if (minToGroup < bestDist) {
-            bestDist = minToGroup;
-            bestIdx = i;
-          }
-        }
-
-        if (bestIdx === -1) break;
-
-        if (bestDist <= radiusKm) {
-          group.push(remaining.splice(bestIdx, 1)[0]);
-        } else {
-          break;
-        }
-      }
-
-      groups.push(group);
-    }
-
-    const inserts = groups
-      .filter((g) => g.length >= 2)
-      .map((g, idx) => {
-        const ordered = orderNearestNeighbor(g);
-        const km = estimateRouteKm(ordered);
-
-        return {
-          user_id: userId,
-          name: `Rota ${idx + 1}`,
-          delivery_ids: ordered.map((p) => p.id),
-          total_est_km: Number(km.toFixed(2)),
-        };
-      });
-
-    if (inserts.length === 0) {
-      setLoading(false);
-      alert("Não consegui montar rotas com 2+ paradas dentro do raio. Aumente o raio.");
-      return;
-    }
-
-    const res = await supabase.from("routes").insert(inserts);
-
-    setLoading(false);
-
-    if (res.error) {
-      alert("Erro ao salvar rotas: " + res.error.message);
-      return;
-    }
-
-    await loadAll();
-    alert(`Rotas geradas: ${inserts.length}`);
-  }
-
   return (
     <div className="card">
       <div className="topbar">
         <h3>Rotas</h3>
-
-        <div className="row" style={{ gap: 10 }}>
-          <button className="ghost" onClick={generateRoutes} disabled={loading}>
-            {loading ? "..." : "Gerar rotas"}
-          </button>
-
-          <button className="ghost" onClick={loadAll} disabled={loading}>
-            {loading ? "..." : "Atualizar"}
-          </button>
-        </div>
+        <button className="ghost" onClick={loadAll}>
+          {loading ? "..." : "Atualizar"}
+        </button>
       </div>
 
-      <div className="grid2" style={{ marginTop: 12 }}>
-        <div>
-          <div className="label">Máx paradas por rota</div>
-          <input
-            value={maxStops}
-            onChange={(e) => setMaxStops(Number(e.target.value || 0))}
-            type="number"
-            min={2}
-          />
-        </div>
-
-        <div>
-          <div className="label">Raio de agrupamento (km)</div>
-          <input
-            value={radiusKm}
-            onChange={(e) => setRadiusKm(Number(e.target.value || 0))}
-            type="number"
-            step="0.1"
-            min={0.1}
-          />
-        </div>
-      </div>
-
-      <div className="list" style={{ marginTop: 16 }}>
-        {routes.map((r, idx) => {
+      <div className="list">
+        {routes.map((r) => {
           const stops = buildStopsFromRoute(r);
           const canOpen = stops.length >= 2;
-
-          const title = r.name && r.name.trim() ? r.name : `Rota ${idx + 1}`;
 
           return (
             <div key={r.id} className="item col">
               <div className="row space">
-                <b>{title}</b>
+                <b>{r.name || "Rota"}</b>
                 <span className="muted">~{r.total_est_km ?? "?"} km</span>
               </div>
 
               <ol style={{ marginTop: 8 }}>
-                {stops.map((s, sIdx) => (
-                  <li key={sIdx}>
+                {stops.map((s, idx) => (
+                  <li key={idx}>
                     {s.label}
-                    <div className="muted" style={{ fontSize: 12 }}>
-                      {s.lat}, {s.lng}
-                    </div>
                   </li>
                 ))}
               </ol>
 
               <div className="row" style={{ gap: 10, marginTop: 10, flexWrap: "wrap" }}>
-                <button className="ghost" disabled={!canOpen} onClick={() => openMapbox(stops)}>
-                  Ver Rota
+                <button
+                  className="ghost"
+                  disabled={!canOpen}
+                  onClick={() => openMapbox(stops)}
+                >
+                  Ver rota
                 </button>
 
                 {!canOpen && (
-                  <span className="muted">Precisa de 2+ paradas com coordenadas.</span>
+                  <span className="muted">
+                    Precisa de pelo menos 2 paradas com coordenadas.
+                  </span>
                 )}
               </div>
             </div>
