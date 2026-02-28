@@ -1,241 +1,242 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useState } from "react";
 import { supabase } from "../lib/supabase";
 
-type Stop = { lat: number; lng: number; label?: string };
-type RouteRow = {
+type DeliveryRow = {
   id: string;
-  user_id: string;
-  name: string | null;
-  status: string;
-  stops: Stop[] | null;
-  total_est_km: number | null;
-  assigned_driver_id: string | null;
-  assigned_at: string | null;
-  started_at: string | null;
-  finished_at: string | null;
+  client_name: string;
+  order_id: string;
+  address_text: string;
+  lat: number | null;
+  lng: number | null;
+  cep?: string | null;
+  number?: string | null;
   created_at?: string;
 };
 
-async function getMe() {
-  const { data } = await supabase.auth.getUser();
-  return data.user ?? null;
+type ViaCepResp = {
+  cep?: string;
+  logradouro?: string;
+  bairro?: string;
+  localidade?: string;
+  uf?: string;
+  erro?: boolean;
+};
+
+function onlyDigits(s: string) {
+  return (s || "").replace(/\D/g, "");
 }
 
-export default function DriverApp() {
-  const [meId, setMeId] = useState<string | null>(null);
-  const [profile, setProfile] = useState<any>(null);
+async function getUserId() {
+  const { data } = await supabase.auth.getSession();
+  return data.session?.user?.id ?? null;
+}
 
-  const [myRoute, setMyRoute] = useState<RouteRow | null>(null);
+async function buscarCep(cep: string): Promise<ViaCepResp> {
+  const clean = onlyDigits(cep);
+  if (clean.length !== 8) throw new Error("CEP inválido.");
+  const res = await fetch(`https://viacep.com.br/ws/${clean}/json/`);
+  const json = (await res.json()) as ViaCepResp;
+  if (json.erro) throw new Error("CEP não encontrado.");
+  return json;
+}
+
+// Remove qualquer "lat/lng: ..." que tenha sido salvo junto no address_text
+function sanitizeAddressText(text: string) {
+  if (!text) return "";
+  // remove linhas que contenham lat/lng (variações)
+  let t = text.replace(/\n?\s*lat\/lng\s*:\s*[-\d.,\s]+/gi, "");
+  t = t.replace(/\n?\s*lat\s*\/\s*lng\s*:\s*[-\d.,\s]+/gi, "");
+  t = t.replace(/\n?\s*lat\s*:\s*[-\d.,\s]+/gi, "");
+  t = t.replace(/\n?\s*lng\s*:\s*[-\d.,\s]+/gi, "");
+  return t.trim();
+}
+
+async function geocodeMapbox(address: string) {
+  const token =
+    import.meta.env.VITE_MAPBOX_TOKEN ||
+    import.meta.env.VITE_MAPBOX_PUBLIC_TOKEN ||
+    import.meta.env.VITE_MAPBOX_ACCESS_TOKEN;
+
+  if (!token) throw new Error("VITE_MAPBOX_TOKEN não configurado.");
+
+  const url =
+    `https://api.mapbox.com/geocoding/v5/mapbox.places/` +
+    `${encodeURIComponent(address)}.json?limit=1&country=br&language=pt&access_token=${token}`;
+
+  const res = await fetch(url);
+  const data = await res.json();
+
+  const feature = data?.features?.[0];
+  if (!feature?.center?.length) return null;
+
+  const [lng, lat] = feature.center;
+  return { lat: Number(lat), lng: Number(lng) };
+}
+
+export default function Deliveries() {
+  const [clientName, setClientName] = useState("");
+  const [orderId, setOrderId] = useState("");
+  const [cep, setCep] = useState("");
+  const [number, setNumber] = useState("");
+
+  const [deliveries, setDeliveries] = useState<DeliveryRow[]>([]);
   const [loading, setLoading] = useState(false);
-  const [msg, setMsg] = useState<string | null>(null);
 
-  // carrega profile + rota atribuída
-  async function load() {
+  async function loadDeliveries() {
     setLoading(true);
-    setMsg(null);
+    try {
+      const userId = await getUserId();
+      if (!userId) return;
 
-    const me = await getMe();
-    if (!me) {
+      const { data, error } = await supabase
+        .from("deliveries")
+        .select("id,client_name,order_id,address_text,lat,lng,cep,number,created_at")
+        .eq("user_id", userId)
+        .order("created_at", { ascending: false });
+
+      if (error) throw error;
+
+      // Sanitiza o texto pra garantir que não aparece lat/lng “embutido”
+      const cleaned = (data || []).map((d: any) => ({
+        ...d,
+        address_text: sanitizeAddressText(d.address_text || ""),
+      }));
+
+      setDeliveries(cleaned as DeliveryRow[]);
+    } catch (e: any) {
+      alert("Erro ao buscar entregas: " + (e?.message || String(e)));
+    } finally {
       setLoading(false);
-      return;
     }
-    setMeId(me.id);
-
-    const p = await supabase.from("profiles").select("*").eq("id", me.id).maybeSingle();
-    if (p.error) {
-      setLoading(false);
-      setMsg("Erro profile: " + p.error.message);
-      return;
-    }
-    setProfile(p.data);
-
-    // minha rota atual (assigned/picked_up/in_progress)
-    const r = await supabase
-      .from("routes")
-      .select("id,user_id,name,status,stops,total_est_km,assigned_driver_id,assigned_at,started_at,finished_at,created_at")
-      .eq("assigned_driver_id", me.id)
-      .in("status", ["assigned", "picked_up", "in_progress"])
-      .order("assigned_at", { ascending: false })
-      .limit(1);
-
-    if (r.error) {
-      setLoading(false);
-      setMsg("Erro rota: " + r.error.message);
-      return;
-    }
-
-    setMyRoute((r.data?.[0] as any) || null);
-    setLoading(false);
   }
 
   useEffect(() => {
-    load();
+    loadDeliveries();
   }, []);
 
-  const role = profile?.role || "admin";
-  const companyId = profile?.company_id || null;
+  async function salvarEntrega() {
+    try {
+      setLoading(true);
 
-  const canWork = useMemo(() => role === "driver" && !!companyId, [role, companyId]);
+      const userId = await getUserId();
+      if (!userId) throw new Error("Você precisa estar logado.");
 
-  async function claimNext() {
-    setLoading(true);
-    setMsg(null);
+      const cleanCep = onlyDigits(cep);
+      if (cleanCep.length !== 8) throw new Error("Digite um CEP válido (8 números).");
 
-    const { data, error } = await supabase.rpc("claim_next_route");
-    setLoading(false);
+      const dadosCep = await buscarCep(cleanCep);
 
-    if (error) {
-      setMsg(error.message);
-      return;
+      const rua = dadosCep.logradouro || "";
+      const bairro = dadosCep.bairro || "";
+      const cidade = dadosCep.localidade || "";
+      const uf = dadosCep.uf || "";
+
+      const numeroTxt = number?.trim() ? number.trim() : "s/n";
+
+      // ✅ endereço SEM coordenadas no texto
+      const enderecoCompleto = sanitizeAddressText(
+        `${rua}, ${numeroTxt} - ${bairro}, ${cidade} - ${uf}, Brasil`.replace(/\s+/g, " ")
+      );
+
+      const coords = await geocodeMapbox(enderecoCompleto);
+
+      const payload: any = {
+        user_id: userId,
+        client_name: clientName.trim() || "Cliente",
+        order_id: orderId.trim() || "",
+        address_text: enderecoCompleto,
+        cep: cleanCep,
+        number: number?.trim() || null,
+        lat: coords?.lat ?? null,
+        lng: coords?.lng ?? null,
+      };
+
+      const { error } = await supabase.from("deliveries").insert(payload);
+      if (error) throw error;
+
+      setClientName("");
+      setOrderId("");
+      setCep("");
+      setNumber("");
+
+      await loadDeliveries();
+    } catch (e: any) {
+      alert(e?.message || String(e));
+    } finally {
+      setLoading(false);
     }
-    if (!data) {
-      setMsg("Nenhuma rota disponível agora.");
-      await load();
-      return;
-    }
-
-    setMsg("Rota atribuída ✅");
-    await load();
   }
 
-  async function pickup() {
-    if (!myRoute) return;
-    setLoading(true);
-    setMsg(null);
+  async function excluirEntrega(id: string) {
+    try {
+      setLoading(true);
+      const userId = await getUserId();
+      if (!userId) throw new Error("Você precisa estar logado.");
 
-    const { error } = await supabase.rpc("pickup_my_route", { p_route_id: myRoute.id });
-    setLoading(false);
+      const { error } = await supabase
+        .from("deliveries")
+        .delete()
+        .eq("id", id)
+        .eq("user_id", userId);
 
-    if (error) {
-      setMsg(error.message);
-      return;
+      if (error) throw error;
+      await loadDeliveries();
+    } catch (e: any) {
+      alert("Erro ao excluir: " + (e?.message || String(e)));
+    } finally {
+      setLoading(false);
     }
-
-    setMsg("Pedido retirado ✅");
-    await load();
-  }
-
-  async function start() {
-    if (!myRoute) return;
-    setLoading(true);
-    setMsg(null);
-
-    const { error } = await supabase.rpc("start_my_route", { p_route_id: myRoute.id });
-    setLoading(false);
-
-    if (error) {
-      setMsg(error.message);
-      return;
-    }
-
-    // abre mapa usando ROUTE_ID (sem sessionStorage)
-    window.location.href = `/route-mapbox?routeId=${encodeURIComponent(myRoute.id)}`;
-  }
-
-  async function finish() {
-    if (!myRoute) return;
-    setLoading(true);
-    setMsg(null);
-
-    const { error } = await supabase.rpc("finish_my_route", { p_route_id: myRoute.id });
-    setLoading(false);
-
-    if (error) {
-      setMsg(error.message);
-      return;
-    }
-
-    setMsg("Rota concluída ✅ Você está livre.");
-    await load();
   }
 
   return (
-    <div className="wrap">
+    <div className="card">
       <div className="topbar">
-        <h2>Entregador</h2>
-        <button className="ghost" onClick={() => supabase.auth.signOut()}>
-          Sair
+        <h3>Entregas</h3>
+        <button className="ghost" onClick={loadDeliveries}>
+          {loading ? "..." : "Atualizar"}
         </button>
       </div>
 
-      <div className="card">
-        <div className="row space">
-          <b>Status</b>
-          <button className="ghost" onClick={load}>
-            {loading ? "..." : "Atualizar"}
-          </button>
-        </div>
+      <label>Cliente</label>
+      <input value={clientName} onChange={(e) => setClientName(e.target.value)} />
 
-        <div className="muted" style={{ marginTop: 8 }}>
-          Sua conta: <b>{role}</b>
-          <br />
-          {role === "driver" ? (
-            <>
-              Empresa vinculada: <b>{companyId ? "ok" : "não"}</b>
-            </>
-          ) : (
-            <>
-              (Você está como admin. Para entregador, role deve ser <b>driver</b>.)
-            </>
-          )}
-        </div>
+      <label>Pedido</label>
+      <input value={orderId} onChange={(e) => setOrderId(e.target.value)} />
 
-        {msg && (
-          <div style={{ marginTop: 10 }}>
-            <b>{msg}</b>
-          </div>
-        )}
+      <label>CEP</label>
+      <input value={cep} onChange={(e) => setCep(e.target.value)} placeholder="ex: 04821450" />
+
+      <label>Número (opcional)</label>
+      <input value={number} onChange={(e) => setNumber(e.target.value)} placeholder="ex: 42" />
+
+      <div className="row" style={{ marginTop: 10 }}>
+        <button onClick={salvarEntrega} disabled={loading}>
+          Salvar entrega
+        </button>
       </div>
 
-      <div className="card" style={{ marginTop: 12 }}>
-        <div className="row space">
-          <b>Minha rota</b>
-          {!myRoute && (
-            <button className="primary" onClick={claimNext} disabled={loading || !canWork}>
-              Pegar próxima rota
-            </button>
-          )}
-        </div>
+      <p className="muted" style={{ marginTop: 10 }}>
+        * Busca ViaCEP + coordenadas automaticamente
+      </p>
 
-        {!canWork && (
-          <p className="muted" style={{ marginTop: 10 }}>
-            Para funcionar: seu profile precisa ter <b>role = 'driver'</b> e <b>company_id</b> apontando para a empresa.
-          </p>
-        )}
-
-        {myRoute ? (
-          <div style={{ marginTop: 10 }}>
+      <div className="list" style={{ marginTop: 12 }}>
+        {deliveries.map((d) => (
+          <div key={d.id} className="item col">
             <div className="row space">
-              <div>
-                <div style={{ fontWeight: 800 }}>{myRoute.name || "Rota"}</div>
-                <div className="muted">Status: {myRoute.status}</div>
-              </div>
-              <div className="muted">~{myRoute.total_est_km ?? "?"} km</div>
-            </div>
-
-            <div style={{ marginTop: 10 }}>
-              <b>Paradas:</b> {Array.isArray(myRoute.stops) ? myRoute.stops.length : 0}
-            </div>
-
-            <div className="row" style={{ gap: 10, marginTop: 12, flexWrap: "wrap" }}>
-              <button className="ghost" disabled={loading || myRoute.status !== "assigned"} onClick={pickup}>
-                Retirar pedido
-              </button>
-
-              <button className="primary" disabled={loading || !["assigned", "picked_up"].includes(myRoute.status)} onClick={start}>
-                Iniciar rota
-              </button>
-
-              <button className="ghost" disabled={loading || myRoute.status !== "in_progress"} onClick={finish}>
-                Concluir rota
+              <b>
+                {d.client_name} — {d.order_id || "—"}
+              </b>
+              <button className="ghost" onClick={() => excluirEntrega(d.id)} disabled={loading}>
+                Excluir
               </button>
             </div>
+
+            {/* ✅ Mostra SÓ o endereço (limpo). Nunca mostra lat/lng */}
+            <div style={{ marginTop: 6 }}>{sanitizeAddressText(d.address_text || "")}</div>
           </div>
-        ) : (
-          <p className="muted" style={{ marginTop: 10 }}>
-            Você está livre. Clique em <b>Pegar próxima rota</b>.
-          </p>
-        )}
+        ))}
+
+        {deliveries.length === 0 && <p className="muted">Nenhuma entrega ainda.</p>}
       </div>
     </div>
   );
