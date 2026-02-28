@@ -41,7 +41,6 @@ function orderNearestNeighbor(points: Array<{ id: string; lat: number; lng: numb
   const remaining = [...points];
   const ordered: typeof remaining = [];
 
-  // começa pelo primeiro (pode melhorar depois, mas ok pro MVP)
   let current = remaining.shift()!;
   ordered.push(current);
 
@@ -144,14 +143,9 @@ export default function Routes() {
     const userId = await getUserId();
     if (!userId) return;
 
-    // pega entregas com coordenadas
     const points = deliveries
       .filter((d) => Number.isFinite(d.lat as any) && Number.isFinite(d.lng as any))
-      .map((d) => ({
-        id: d.id,
-        lat: d.lat as number,
-        lng: d.lng as number,
-      }));
+      .map((d) => ({ id: d.id, lat: d.lat as number, lng: d.lng as number }));
 
     if (points.length < 2) {
       alert("Precisa de pelo menos 2 entregas com coordenadas para gerar rota.");
@@ -160,7 +154,6 @@ export default function Routes() {
 
     setLoading(true);
 
-    // agrupamento simples por raio: vai criando grupos a partir de um ponto base
     const remaining = [...points];
     const groups: Array<Array<{ id: string; lat: number; lng: number }>> = [];
 
@@ -168,21 +161,16 @@ export default function Routes() {
       const seed = remaining.shift()!;
       const group = [seed];
 
-      // puxa os próximos mais perto do seed até bater maxStops ou acabar
-      // (bem MVP, mas funciona)
       while (group.length < maxStops && remaining.length) {
-        // acha o melhor candidato mais perto de qualquer ponto do grupo (min dist)
         let bestIdx = -1;
         let bestDist = Infinity;
 
         for (let i = 0; i < remaining.length; i++) {
-          // distância mínima para o grupo
           let minToGroup = Infinity;
           for (const g of group) {
             const d = haversineKm(g, remaining[i]);
             if (d < minToGroup) minToGroup = d;
           }
-
           if (minToGroup < bestDist) {
             bestDist = minToGroup;
             bestIdx = i;
@@ -191,7 +179,6 @@ export default function Routes() {
 
         if (bestIdx === -1) break;
 
-        // se estiver dentro do raio (ou se raio for muito pequeno e não agrupar nada, cria rota solo)
         if (bestDist <= radiusKm) {
           group.push(remaining.splice(bestIdx, 1)[0]);
         } else {
@@ -202,16 +189,15 @@ export default function Routes() {
       groups.push(group);
     }
 
-    // ordena cada grupo por proximidade (NN) e salva no banco com nome único
     const inserts = groups
-      .filter((g) => g.length >= 2) // só salva rotas com 2+ paradas
+      .filter((g) => g.length >= 2)
       .map((g, idx) => {
         const ordered = orderNearestNeighbor(g);
         const km = estimateRouteKm(ordered);
 
         return {
           user_id: userId,
-          name: `Rota ${idx + 1}`, // ✅ NOME ÚNICO
+          name: `Rota ${idx + 1}`,
           delivery_ids: ordered.map((p) => p.id),
           total_est_km: Number(km.toFixed(2)),
         };
@@ -280,8 +266,7 @@ export default function Routes() {
           const stops = buildStopsFromRoute(r);
           const canOpen = stops.length >= 2;
 
-          // ✅ Fallback correto: se name vier null, usa índice na lista
-          const title = (r.name && r.name.trim()) ? r.name : `Rota ${idx + 1}`;
+          const title = r.name && r.name.trim() ? r.name : `Rota ${idx + 1}`;
 
           return (
             <div key={r.id} className="item col">
@@ -294,7 +279,6 @@ export default function Routes() {
                 {stops.map((s, sIdx) => (
                   <li key={sIdx}>
                     {s.label}
-                    {/* se quiser esconder lat/lng aqui, é só apagar este bloco */}
                     <div className="muted" style={{ fontSize: 12 }}>
                       {s.lat}, {s.lng}
                     </div>
