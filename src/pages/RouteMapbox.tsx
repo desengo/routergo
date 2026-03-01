@@ -3,7 +3,7 @@ import mapboxgl from "mapbox-gl";
 import "mapbox-gl/dist/mapbox-gl.css";
 import { useNavigate } from "react-router-dom";
 
-type Stop = { lat: number; lng: number; label?: string; delivery_id?: string };
+type Stop = { lat: number; lng: number; label?: string };
 
 export default function RouteMapbox() {
   const nav = useNavigate();
@@ -107,7 +107,6 @@ export default function RouteMapbox() {
           paint: { "line-width": 6, "line-color": "#2f7bff", "line-opacity": 0.9 },
         });
 
-        // fit bounds
         const bounds = new mapboxgl.LngLatBounds();
         stops.forEach((s) => bounds.extend([s.lng, s.lat]));
         map.fitBounds(bounds, { padding: 60, duration: 600 });
