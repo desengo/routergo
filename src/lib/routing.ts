@@ -55,7 +55,7 @@ export function generateRoutesMVP(
   const routes: Array<{ stops: Stop[]; totalKm: number }> = [];
 
   while (left.length) {
-    // pega um “seed”
+    // seed
     const seed = left.shift()!;
     const cluster: Stop[] = [seed];
 
@@ -66,10 +66,10 @@ export function generateRoutesMVP(
       if (d <= radiusKm) cluster.push(left.splice(i, 1)[0]);
     }
 
-    // ordena rota
+    // ordena
     const ordered = orderNearestNeighbor(cluster);
 
-    // estima km (soma do caminho)
+    // estima km
     let total = 0;
     for (let i = 0; i < ordered.length - 1; i++) {
       total += haversineKm(ordered[i], ordered[i + 1]);
