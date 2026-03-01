@@ -1,4 +1,3 @@
-// src/pages/Routes.tsx
 import React, { useEffect, useMemo, useState } from "react";
 import { supabase } from "../lib/supabase";
 
@@ -11,12 +10,12 @@ type DeliveryRow = {
   lng: number | null;
 };
 
-type RouteStop = { lat: number; lng: number; label?: string; delivery_id?: string };
+type RouteStop = { lat: number; lng: number; label?: string };
 
 type RouteRow = {
   id: string;
   name: string | null;
-  status: string | null; // "ready" | "assigned" | "picked_up" | "in_progress" | "done"
+  status: string | null;
   delivery_ids?: string[] | null;
   stops?: RouteStop[] | null;
   total_est_km: number | null;
@@ -56,8 +55,8 @@ export default function Routes() {
 
     setLoading(false);
 
-    if (d.error) alert("Erro ao buscar entregas: " + d.error.message);
-    if (r.error) alert("Erro ao buscar rotas: " + r.error.message);
+    if (d.error) alert(d.error.message);
+    if (r.error) alert(r.error.message);
 
     setDeliveries((d.data || []) as any);
     setRoutes((r.data || []) as any);
@@ -67,27 +66,27 @@ export default function Routes() {
     loadAll();
   }, []);
 
-  const byId = useMemo(() => new Map(deliveries.map((d) => [d.id, d] as const)), [deliveries]);
+  const byId = useMemo(
+    () => new Map(deliveries.map((d) => [d.id, d] as const)),
+    [deliveries]
+  );
 
   function openMapbox(stops: Array<{ lat: number; lng: number; label: string }>) {
-    // ✅ RouteMapbox.tsx já lê do sessionStorage("routergo_stops")
     sessionStorage.setItem("routergo_stops", JSON.stringify(stops));
     window.location.href = "/route-mapbox";
   }
 
   function buildStopsFromRoute(route: RouteRow) {
-    // 1) se tiver stops salvos na route, usa eles
     if (Array.isArray(route.stops) && route.stops.length) {
       return route.stops
         .map((s, idx) => ({
           lat: Number(s.lat),
           lng: Number(s.lng),
-          label: (s.label && String(s.label)) || `Parada ${idx + 1}`,
+          label: s.label || `Parada ${idx + 1}`,
         }))
         .filter((s) => Number.isFinite(s.lat) && Number.isFinite(s.lng));
     }
 
-    // 2) senão, monta via delivery_ids + deliveries
     const ids = Array.isArray(route.delivery_ids) ? route.delivery_ids : [];
     const list = ids.map((id) => byId.get(id)).filter(Boolean) as DeliveryRow[];
 
@@ -96,7 +95,7 @@ export default function Routes() {
       .map((d, idx) => ({
         lat: d.lat as number,
         lng: d.lng as number,
-        label: `${idx + 1}. ${d.client_name} — ${d.order_id || ""}`.trim(),
+        label: `${d.client_name} — ${d.order_id || ""}`,
       }));
   }
 
@@ -114,40 +113,26 @@ export default function Routes() {
 
       if (error) throw error;
 
-      await loadAll(); // ✅ some do card atual e aparece em Concluídas
+      await loadAll();
     } catch (e: any) {
-      alert("Erro ao concluir rota: " + (e?.message || String(e)));
+      alert("Erro ao concluir rota: " + e.message);
     } finally {
       setLoading(false);
     }
   }
 
-  const novas = useMemo(
-    () => routes.filter((r) => (r.status || "ready") === "ready"),
-    [routes]
+  const novas = routes.filter((r) => (r.status || "ready") === "ready");
+  const andamento = routes.filter((r) =>
+    ["assigned", "picked_up", "in_progress"].includes(r.status || "")
   );
-
-  const andamento = useMemo(
-    () =>
-      routes.filter((r) =>
-        ["assigned", "picked_up", "in_progress"].includes(r.status || "")
-      ),
-    [routes]
-  );
-
-  const concluidas = useMemo(
-    () => routes.filter((r) => (r.status || "") === "done"),
-    [routes]
-  );
+  const concluidas = routes.filter((r) => (r.status || "") === "done");
 
   function Section({
     title,
-    subtitle,
     list,
     showConcluir,
   }: {
     title: string;
-    subtitle: string;
     list: RouteRow[];
     showConcluir: boolean;
   }) {
@@ -160,10 +145,6 @@ export default function Routes() {
           </button>
         </div>
 
-        <p className="muted" style={{ marginTop: 6 }}>
-          {subtitle}
-        </p>
-
         <div className="list" style={{ marginTop: 12 }}>
           {list.map((r) => {
             const stops = buildStopsFromRoute(r);
@@ -173,7 +154,9 @@ export default function Routes() {
               <div key={r.id} className="item col">
                 <div className="row space">
                   <b>{r.name || "Rota"}</b>
-                  <span className="muted">~{r.total_est_km ?? "?"} km</span>
+                  <span className="muted">
+                    ~{r.total_est_km ? r.total_est_km.toFixed(2) : "0"} km
+                  </span>
                 </div>
 
                 <ol style={{ marginTop: 8 }}>
@@ -182,10 +165,7 @@ export default function Routes() {
                   ))}
                 </ol>
 
-                <div
-                  className="row"
-                  style={{ gap: 10, marginTop: 10, flexWrap: "wrap" }}
-                >
+                <div className="row" style={{ gap: 10, marginTop: 10 }}>
                   <button
                     className="ghost"
                     disabled={!canOpen}
@@ -214,7 +194,9 @@ export default function Routes() {
             );
           })}
 
-          {list.length === 0 && <p className="muted">Nenhuma rota aqui.</p>}
+          {list.length === 0 && (
+            <p className="muted">Nenhuma rota aqui.</p>
+          )}
         </div>
       </div>
     );
@@ -222,26 +204,9 @@ export default function Routes() {
 
   return (
     <div>
-      <Section
-        title="Rotas novas"
-        subtitle="Criadas e aguardando andamento."
-        list={novas}
-        showConcluir={true}
-      />
-
-      <Section
-        title="Em andamento"
-        subtitle="Rotas atribuídas/retiradas/em rota."
-        list={andamento}
-        showConcluir={true}
-      />
-
-      <Section
-        title="Concluídas"
-        subtitle="Rotas finalizadas."
-        list={concluidas}
-        showConcluir={false}
-      />
+      <Section title="Rotas novas" list={novas} showConcluir={true} />
+      <Section title="Em andamento" list={andamento} showConcluir={true} />
+      <Section title="Rotas concluídas" list={concluidas} showConcluir={false} />
     </div>
   );
 }
