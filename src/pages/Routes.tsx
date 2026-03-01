@@ -12,7 +12,12 @@ type DeliveryRow = {
   created_at?: string;
 };
 
-type RouteStop = { lat: number; lng: number; label?: string; delivery_id?: string };
+type RouteStop = {
+  lat: number;
+  lng: number;
+  label?: string;
+  delivery_id?: string;
+};
 
 type RouteRow = {
   id: string;
@@ -31,14 +36,6 @@ async function getUserId() {
   return data.session?.user?.id ?? null;
 }
 
-function parseRouteNumber(name?: string | null) {
-  if (!name) return null;
-  const m = name.match(/rota\s*(\d+)/i);
-  if (!m) return null;
-  const n = Number(m[1]);
-  return Number.isFinite(n) ? n : null;
-}
-
 function nowIso() {
   return new Date().toISOString();
 }
@@ -54,15 +51,20 @@ function cleanText(s: string) {
   return (s || "").replace(/\s+/g, " ").trim();
 }
 
-// ✅ monta um texto completo pro stop (cliente + pedido + endereço)
 function stopText(d: DeliveryRow) {
   const name = cleanText(d.client_name || "Cliente");
   const order = cleanText(d.order_id || "");
   const addr = cleanText(d.address_text || "");
-
-  // exemplo: "José — 886 · Rua Daniel Ribeiro Calado, 235 - ..."
   const left = order ? `${name} — ${order}` : name;
   return addr ? `${left} · ${addr}` : left;
+}
+
+function parseRouteNumber(name?: string | null) {
+  if (!name) return null;
+  const m = name.match(/rota\s*(\d+)/i);
+  if (!m) return null;
+  const n = Number(m[1]);
+  return Number.isFinite(n) ? n : null;
 }
 
 export default function Routes() {
@@ -73,6 +75,11 @@ export default function Routes() {
   const [maxStops, setMaxStops] = useState(5);
   const [radiusKm, setRadiusKm] = useState(1.2);
 
+  const byId = useMemo(
+    () => new Map(deliveries.map((d) => [d.id, d] as const)),
+    [deliveries]
+  );
+
   async function loadAll() {
     setLoading(true);
     try {
@@ -81,7 +88,6 @@ export default function Routes() {
 
       const d = await supabase
         .from("deliveries")
-        // ✅ garante que address_text vem
         .select("id,client_name,order_id,address_text,lat,lng,created_at")
         .eq("user_id", userId)
         .order("created_at", { ascending: false });
@@ -105,7 +111,7 @@ export default function Routes() {
     }
   }
 
-  // Auto-concluir rotas com +24h que ainda não foram concluídas
+  // ✅ Auto-concluir rotas com +24h que ainda não foram concluídas
   async function autoConcludeOldRoutes(list: RouteRow[]) {
     const userId = await getUserId();
     if (!userId) return;
@@ -114,24 +120,20 @@ export default function Routes() {
     if (!toAuto.length) return;
 
     const ids = toAuto.map((r) => r.id);
+
     const { error } = await supabase
       .from("routes")
       .update({ status: "done", concluded_by: "auto", concluded_at: nowIso() })
       .in("id", ids)
       .eq("user_id", userId);
 
-    if (error) {
-      console.warn("autoConclude error:", error.message);
-      return;
-    }
+    if (error) return;
 
     await loadAll();
   }
 
   useEffect(() => {
-    (async () => {
-      await loadAll();
-    })();
+    loadAll();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -140,8 +142,6 @@ export default function Routes() {
     autoConcludeOldRoutes(routes);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [routes.length]);
-
-  const byId = useMemo(() => new Map(deliveries.map((d) => [d.id, d] as const)), [deliveries]);
 
   const usedDeliveryIds = useMemo(() => {
     const set = new Set<string>();
@@ -154,19 +154,29 @@ export default function Routes() {
     window.location.href = "/route-mapbox";
   }
 
+  // ✅ AQUI é a correção: se tiver delivery_id, monta label com endereço (sempre)
   function buildStopsFromRoute(route: RouteRow) {
-    // ✅ preferir stops salvos
     if (Array.isArray(route.stops) && route.stops.length) {
       return route.stops
-        .map((s, idx) => ({
-          lat: Number(s.lat),
-          lng: Number(s.lng),
-          label: s.label || `Parada ${idx + 1}`,
-        }))
-        .filter((s) => Number.isFinite(s.lat) && Number.isFinite(s.lng));
+        .map((s, idx) => {
+          const lat = Number(s.lat);
+          const lng = Number(s.lng);
+          if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+
+          const d = s.delivery_id ? byId.get(s.delivery_id) : undefined;
+          const labelFromDelivery = d ? `${idx + 1}. ${stopText(d)}` : null;
+
+          return {
+            lat,
+            lng,
+            // prioridade: delivery -> label salvo -> fallback
+            label: labelFromDelivery || s.label || `Parada ${idx + 1}`,
+          };
+        })
+        .filter(Boolean) as Array<{ lat: number; lng: number; label: string }>;
     }
 
-    // fallback: monta pelos delivery_ids com address_text
+    // fallback: monta pelos delivery_ids
     const ids = Array.isArray(route.delivery_ids) ? route.delivery_ids : [];
     const list = ids.map((id) => byId.get(id)).filter(Boolean) as DeliveryRow[];
 
@@ -175,30 +185,8 @@ export default function Routes() {
       .map((d, idx) => ({
         lat: d.lat as number,
         lng: d.lng as number,
-        // ✅ inclui endereço no label
         label: `${idx + 1}. ${stopText(d)}`,
       }));
-  }
-
-  async function concluirRota(routeId: string) {
-    try {
-      setLoading(true);
-      const userId = await getUserId();
-      if (!userId) return;
-
-      const { error } = await supabase
-        .from("routes")
-        .update({ status: "done", concluded_by: "manual", concluded_at: nowIso() })
-        .eq("id", routeId)
-        .eq("user_id", userId);
-
-      if (error) throw error;
-      await loadAll();
-    } catch (e: any) {
-      alert("Erro ao concluir rota: " + (e?.message || String(e)));
-    } finally {
-      setLoading(false);
-    }
   }
 
   async function marcarEmAndamento(routeId: string) {
@@ -217,6 +205,27 @@ export default function Routes() {
       await loadAll();
     } catch (e: any) {
       alert("Erro ao mover para andamento: " + (e?.message || String(e)));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function concluirRota(routeId: string) {
+    try {
+      setLoading(true);
+      const userId = await getUserId();
+      if (!userId) return;
+
+      const { error } = await supabase
+        .from("routes")
+        .update({ status: "done", concluded_by: "manual", concluded_at: nowIso() })
+        .eq("id", routeId)
+        .eq("user_id", userId);
+
+      if (error) throw error;
+      await loadAll();
+    } catch (e: any) {
+      alert("Erro ao concluir rota: " + (e?.message || String(e)));
     } finally {
       setLoading(false);
     }
@@ -258,12 +267,11 @@ export default function Routes() {
         return;
       }
 
-      // ✅ stops agora já carregam label com endereço
       const stops = available.map((d) => ({
         delivery_id: d.id,
         lat: d.lat as number,
         lng: d.lng as number,
-        label: stopText(d),
+        label: stopText(d), // ✅ inclui endereço aqui também
       }));
 
       const groups = generateRoutesMVP(stops, { maxStops, radiusKm });
@@ -283,7 +291,7 @@ export default function Routes() {
           name: `Rota ${next++}`,
           status: "new",
           delivery_ids,
-          // ✅ salva stops com label completo (com endereço)
+          // ✅ salva delivery_id sempre (pra UI conseguir reconstruir com endereço)
           stops: g.stops.map((s, idx) => ({
             delivery_id: s.delivery_id,
             lat: s.lat,
@@ -416,7 +424,6 @@ export default function Routes() {
         * Rotas novas vão para Concluídas automaticamente após 24h (marcadas como “auto”).
       </p>
 
-      {/* ROTAS NOVAS */}
       <div className="card" style={{ marginTop: 12 }}>
         <div className="row space">
           <b>Rotas novas</b>
@@ -430,7 +437,6 @@ export default function Routes() {
         </div>
       </div>
 
-      {/* EM ANDAMENTO */}
       <div className="card" style={{ marginTop: 12 }}>
         <div className="row space">
           <b>Em andamento</b>
@@ -444,7 +450,6 @@ export default function Routes() {
         </div>
       </div>
 
-      {/* CONCLUÍDAS */}
       <div className="card" style={{ marginTop: 12 }}>
         <div className="row space">
           <b>Concluídas</b>
