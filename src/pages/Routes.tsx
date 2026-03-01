@@ -1,6 +1,6 @@
-import React, { useEffect, useRef, useState } from "react";
+// src/pages/Routes.tsx
+import React, { useEffect, useMemo, useState } from "react";
 import { supabase } from "../lib/supabase";
-import { generateRoutesMVP, Stop as MVPStop } from "../lib/routing";
 
 type DeliveryRow = {
   id: string;
@@ -9,214 +9,275 @@ type DeliveryRow = {
   address_text: string;
   lat: number | null;
   lng: number | null;
-  created_at?: string;
 };
 
-type Stop = { lat: number; lng: number; label?: string; delivery_id?: string };
+type RouteStop = { lat: number; lng: number; label?: string; delivery_id?: string };
+
+type RouteStatus = "ready" | "assigned" | "picked_up" | "in_progress" | "done" | string;
 
 type RouteRow = {
   id: string;
   name: string | null;
-  delivery_ids: string[] | null;
-  stops: Stop[] | null;
+  delivery_ids?: string[];
+  stops?: RouteStop[];
   total_est_km: number | null;
   created_at?: string;
+
+  // opcionais (podem não existir no seu schema ainda)
+  status?: RouteStatus | null;
+  paid_at?: string | null;
+  finished_at?: string | null;
 };
-
-async function getUserId() {
-  const { data } = await supabase.auth.getSession();
-  return data.session?.user?.id ?? null;
-}
-
-function uniq<T>(arr: T[]) {
-  return Array.from(new Set(arr));
-}
-
-function oneLine(s: string) {
-  return (s || "").replace(/\s+/g, " ").trim();
-}
 
 export default function Routes() {
   const [deliveries, setDeliveries] = useState<DeliveryRow[]>([]);
   const [routes, setRoutes] = useState<RouteRow[]>([]);
   const [loading, setLoading] = useState(false);
 
-  // parâmetros do MVP
-  const [maxStops] = useState(5);
-  const [radiusKm] = useState(1.2);
-
-  // evita rodar auto-geração em loop (StrictMode no dev)
-  const didAutoRef = useRef(false);
-
-  function openMapbox(stops: Stop[]) {
-    sessionStorage.setItem("routergo_stops", JSON.stringify(stops));
-    window.location.href = "/route-mapbox";
+  async function getUser() {
+    const { data } = await supabase.auth.getSession();
+    return data.session?.user ?? null;
   }
 
-  function buildUnroutedDeliveries(allDeliveries: DeliveryRow[], allRoutes: RouteRow[]) {
-    const routedIds = uniq(
-      (allRoutes || [])
-        .flatMap((r) => (Array.isArray(r.delivery_ids) ? r.delivery_ids : []))
-        .filter(Boolean)
-    );
-    const routedSet = new Set(routedIds);
-    return allDeliveries.filter((d) => !routedSet.has(d.id));
-  }
-
-  async function loadAll(andAutoGenerate = false) {
+  async function loadAll() {
     setLoading(true);
-    try {
-      const userId = await getUserId();
-      if (!userId) return;
 
-      const d = await supabase
-        .from("deliveries")
-        .select("id,client_name,order_id,address_text,lat,lng,created_at")
-        .eq("user_id", userId)
-        .order("created_at", { ascending: false });
+    const user = await getUser();
+    if (!user) {
+      setLoading(false);
+      return;
+    }
 
-      if (d.error) throw d.error;
+    // ---- Deliveries (base) ----
+    const d = await supabase
+      .from("deliveries")
+      .select("id,client_name,order_id,address_text,lat,lng")
+      .eq("user_id", user.id);
 
-      const r = await supabase
+    if (d.error) {
+      setLoading(false);
+      alert("Erro ao buscar entregas: " + d.error.message);
+      return;
+    }
+
+    setDeliveries((d.data || []) as any);
+
+    // ---- Routes (tenta com colunas extras: status/paid_at/finished_at) ----
+    const selectWithExtras =
+      "id,name,delivery_ids,stops,total_est_km,created_at,status,paid_at,finished_at";
+
+    const selectBase = "id,name,delivery_ids,stops,total_est_km,created_at";
+
+    let r = await supabase
+      .from("routes")
+      .select(selectWithExtras)
+      .eq("user_id", user.id)
+      .order("created_at", { ascending: false });
+
+    // fallback se sua tabela ainda não tem status/paid_at/finished_at
+    if (r.error && /column .* does not exist/i.test(r.error.message)) {
+      r = await supabase
         .from("routes")
-        .select("id,name,delivery_ids,stops,total_est_km,created_at")
-        .eq("user_id", userId)
+        .select(selectBase)
+        .eq("user_id", user.id)
         .order("created_at", { ascending: false });
+    }
 
-      if (r.error) throw r.error;
+    setLoading(false);
 
-      const dData = (d.data || []) as DeliveryRow[];
-      const rData = (r.data || []) as RouteRow[];
+    if (r.error) {
+      alert("Erro ao buscar rotas: " + r.error.message);
+      return;
+    }
 
-      setDeliveries(dData);
-      setRoutes(rData);
+    // normaliza status default
+    const normalized = (r.data || []).map((row: any) => ({
+      ...row,
+      status: row.status ?? "ready",
+      paid_at: row.paid_at ?? null,
+      finished_at: row.finished_at ?? null,
+    }));
 
-      if (andAutoGenerate && !didAutoRef.current) {
-        didAutoRef.current = true;
-        await autoGenerateIfNeeded(userId, dData, rData);
+    setRoutes(normalized as RouteRow[]);
+  }
 
-        const rr = await supabase
-          .from("routes")
-          .select("id,name,delivery_ids,stops,total_est_km,created_at")
-          .eq("user_id", userId)
-          .order("created_at", { ascending: false });
+  useEffect(() => {
+    loadAll();
+  }, []);
 
-        if (!rr.error) setRoutes((rr.data || []) as any);
+  const byId = useMemo(() => new Map(deliveries.map((d) => [d.id, d] as const)), [deliveries]);
+
+  function openMapbox(stops: Array<{ lat: number; lng: number; label: string }>) {
+    sessionStorage.setItem("routergo_stops", JSON.stringify(stops));
+    window.location.href = `/route-mapbox`;
+  }
+
+  function buildStopsFromRoute(route: RouteRow) {
+    // se rota já tem stops salvos
+    if (Array.isArray(route.stops) && route.stops.length) {
+      return route.stops
+        .map((s, idx) => ({
+          lat: Number(s.lat),
+          lng: Number(s.lng),
+          label: s.label || `Parada ${idx + 1}`,
+        }))
+        .filter((s) => Number.isFinite(s.lat) && Number.isFinite(s.lng));
+    }
+
+    // senão monta pelos delivery_ids
+    const ids = Array.isArray(route.delivery_ids) ? route.delivery_ids : [];
+    const list = ids.map((id) => byId.get(id)).filter(Boolean) as DeliveryRow[];
+
+    return list
+      .filter((d) => d.lat != null && d.lng != null)
+      .map((d, idx) => ({
+        lat: d.lat as number,
+        lng: d.lng as number,
+        label: `${idx + 1}. ${d.client_name} — ${d.order_id}`,
+      }));
+  }
+
+  function isPaid(r: RouteRow) {
+    return !!r.paid_at;
+  }
+
+  async function payRoute(routeId: string) {
+    try {
+      setLoading(true);
+
+      // tenta marcar paid_at = agora (precisa existir a coluna)
+      const { error } = await supabase
+        .from("routes")
+        .update({ paid_at: new Date().toISOString() } as any)
+        .eq("id", routeId);
+
+      if (error) {
+        // se não existir paid_at, avisa o que falta
+        if (/column .*paid_at.* does not exist/i.test(error.message)) {
+          alert(
+            "Sua tabela 'routes' não tem a coluna 'paid_at'.\n" +
+              "Crie uma coluna paid_at (timestamp) para registrar pagamento."
+          );
+          return;
+        }
+        throw error;
       }
+
+      await loadAll();
     } catch (e: any) {
-      alert("Erro ao buscar dados: " + (e?.message || String(e)));
+      alert("Erro ao pagar rota: " + (e?.message || String(e)));
     } finally {
       setLoading(false);
     }
   }
 
-  async function autoGenerateIfNeeded(userId: string, dData: DeliveryRow[], rData: RouteRow[]) {
-    const unrouted = buildUnroutedDeliveries(dData, rData);
+  // ---- separação por status ----
+  const groups = useMemo(() => {
+    const novas: RouteRow[] = [];
+    const andamento: RouteRow[] = [];
+    const concluidas: RouteRow[] = [];
 
-    const unroutedStops: MVPStop[] = unrouted
-      .filter((d) => d.lat != null && d.lng != null)
-      .map((d) => ({
-        delivery_id: d.id,
-        lat: d.lat as number,
-        lng: d.lng as number,
-        // ✅ label com endereço (bonito e útil)
-        label: oneLine(`${d.client_name} — ${d.order_id || "—"} · ${d.address_text || ""}`),
-      }));
+    for (const r of routes) {
+      const s = (r.status || "ready").toLowerCase();
 
-    if (unroutedStops.length < 2) return;
+      if (s === "done") concluidas.push(r);
+      else if (s === "in_progress" || s === "picked_up" || s === "assigned") andamento.push(r);
+      else novas.push(r);
+    }
 
-    const generated = generateRoutesMVP(unroutedStops, { maxStops, radiusKm });
-    if (!generated.length) return;
+    return { novas, andamento, concluidas };
+  }, [routes]);
 
-    const { count, error: countErr } = await supabase
-      .from("routes")
-      .select("id", { count: "exact", head: true })
-      .eq("user_id", userId);
+  function Section({
+    title,
+    subtitle,
+    items,
+  }: {
+    title: string;
+    subtitle?: string;
+    items: RouteRow[];
+  }) {
+    return (
+      <div className="card" style={{ marginTop: 12 }}>
+        <div className="row space">
+          <div>
+            <h3 style={{ margin: 0 }}>{title}</h3>
+            {subtitle && <div className="muted" style={{ marginTop: 4 }}>{subtitle}</div>}
+          </div>
+          <button className="ghost" onClick={loadAll}>
+            {loading ? "..." : "Atualizar"}
+          </button>
+        </div>
 
-    if (countErr) throw countErr;
+        <div className="list" style={{ marginTop: 12 }}>
+          {items.map((r) => {
+            const stops = buildStopsFromRoute(r);
+            const canOpen = stops.length >= 2;
 
-    const startIndex = (count || 0) + 1;
+            const notFinished = (r.status || "ready").toLowerCase() !== "done";
+            const showPay = notFinished && !isPaid(r);
 
-    const rows = generated.map((gr, idx) => {
-      const stops: Stop[] = gr.stops.map((s) => ({
-        delivery_id: s.delivery_id,
-        lat: s.lat,
-        lng: s.lng,
-        // ✅ sem "1." no texto (o <ol> já numera)
-        label: oneLine(s.label || "Parada"),
-      }));
+            return (
+              <div key={r.id} className="item col">
+                <div className="row space">
+                  <b>{r.name || "Rota"}</b>
+                  <span className="muted">~{r.total_est_km ?? "?"} km</span>
+                </div>
 
-      const delivery_ids = gr.stops.map((s) => s.delivery_id).filter(Boolean) as string[];
+                <ol style={{ marginTop: 8 }}>
+                  {stops.map((s, idx) => (
+                    <li key={idx}>{s.label}</li>
+                  ))}
+                </ol>
 
-      return {
-        user_id: userId,
-        name: `Rota ${startIndex + idx}`,
-        delivery_ids,
-        stops,
-        total_est_km: Number.isFinite(gr.totalKm) ? gr.totalKm : null,
-      };
-    });
+                <div className="row" style={{ gap: 10, marginTop: 10, flexWrap: "wrap" }}>
+                  <button className="ghost" disabled={!canOpen} onClick={() => openMapbox(stops)}>
+                    Ver rota
+                  </button>
 
-    const ins = await supabase.from("routes").insert(rows);
-    if (ins.error) throw ins.error;
+                  {showPay && (
+                    <button className="primary" disabled={loading} onClick={() => payRoute(r.id)}>
+                      Pagar rota
+                    </button>
+                  )}
+
+                  {!showPay && isPaid(r) && (
+                    <span className="muted">Pago ✅</span>
+                  )}
+
+                  {!canOpen && (
+                    <span className="muted">Precisa de pelo menos 2 paradas com coordenadas.</span>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+
+          {items.length === 0 && <p className="muted">Nada aqui ainda.</p>}
+        </div>
+      </div>
+    );
   }
 
-  useEffect(() => {
-    loadAll(true);
-  }, []);
-
   return (
-    <div className="card">
-      <div className="topbar">
-        <h3>Rotas</h3>
-        <button className="ghost" onClick={() => loadAll(false)}>
-          {loading ? "..." : "Atualizar"}
-        </button>
-      </div>
+    <div>
+      <Section
+        title="Rotas novas"
+        subtitle="Criadas e aguardando andamento."
+        items={groups.novas}
+      />
 
-      <p className="muted" style={{ marginTop: 8 }}>
-        * Rotas são geradas automaticamente quando existem entregas novas (ainda não roteadas).
-      </p>
+      <Section
+        title="Rotas em andamento"
+        subtitle="Já iniciadas/atribuídas, ainda não finalizadas."
+        items={groups.andamento}
+      />
 
-      <div className="list" style={{ marginTop: 12 }}>
-        {routes.map((r) => {
-          const stops = Array.isArray(r.stops) ? r.stops : [];
-          const canOpen = stops.length >= 2;
-
-          return (
-            <div key={r.id} className="item col">
-              <div className="row space">
-                <b>{r.name || "Rota"}</b>
-                <span className="muted">
-                  ~
-                  {typeof r.total_est_km === "number"
-                    ? r.total_est_km.toFixed(2)
-                    : "?"}{" "}
-                  km
-                </span>
-              </div>
-
-              <ol style={{ marginTop: 8 }}>
-                {stops.map((s, idx) => (
-                  <li key={idx}>{s.label || `Parada ${idx + 1}`}</li>
-                ))}
-              </ol>
-
-              <div className="row" style={{ gap: 10, marginTop: 10, flexWrap: "wrap" }}>
-                <button className="ghost" disabled={!canOpen} onClick={() => openMapbox(stops)}>
-                  Ver rota
-                </button>
-
-                {!canOpen && (
-                  <span className="muted">Precisa de pelo menos 2 paradas com coordenadas.</span>
-                )}
-              </div>
-            </div>
-          );
-        })}
-
-        {routes.length === 0 && <p className="muted">Nenhuma rota ainda.</p>}
-      </div>
+      <Section
+        title="Rotas concluídas"
+        subtitle="Finalizadas."
+        items={groups.concluidas}
+      />
     </div>
   );
 }
