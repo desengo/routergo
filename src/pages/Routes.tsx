@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "../lib/supabase";
 import { generateRoutesMVP, Stop as MVPStop } from "../lib/routing";
 
@@ -9,6 +9,7 @@ type DeliveryRow = {
   address_text: string;
   lat: number | null;
   lng: number | null;
+  created_at?: string;
 };
 
 type Stop = { lat: number; lng: number; label?: string; delivery_id?: string };
@@ -27,48 +28,21 @@ async function getUserId() {
   return data.session?.user?.id ?? null;
 }
 
+function uniq<T>(arr: T[]) {
+  return Array.from(new Set(arr));
+}
+
 export default function Routes() {
   const [deliveries, setDeliveries] = useState<DeliveryRow[]>([]);
   const [routes, setRoutes] = useState<RouteRow[]>([]);
   const [loading, setLoading] = useState(false);
 
-  const [maxStops, setMaxStops] = useState(5);
-  const [radiusKm, setRadiusKm] = useState(1.2);
+  // parâmetros do MVP (pode manter hidden se quiser)
+  const [maxStops] = useState(5);
+  const [radiusKm] = useState(1.2);
 
-  async function loadAll() {
-    setLoading(true);
-    try {
-      const userId = await getUserId();
-      if (!userId) return;
-
-      const d = await supabase
-        .from("deliveries")
-        .select("id,client_name,order_id,address_text,lat,lng")
-        .eq("user_id", userId)
-        .order("created_at", { ascending: false });
-
-      if (d.error) throw d.error;
-      setDeliveries((d.data || []) as any);
-
-      const r = await supabase
-        .from("routes")
-        .select("id,name,delivery_ids,stops,total_est_km,created_at")
-        .eq("user_id", userId)
-        .order("created_at", { ascending: false });
-
-      if (r.error) throw r.error;
-      setRoutes((r.data || []) as any);
-    } catch (e: any) {
-      alert("Erro ao buscar dados: " + (e?.message || String(e)));
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  useEffect(() => {
-    // ✅ ao abrir a aba: só carrega, NÃO gera
-    loadAll();
-  }, []);
+  // ✅ evita rodar auto-geração em loop (StrictMode chama useEffect 2x no dev)
+  const didAutoRef = useRef(false);
 
   const usableStops: MVPStop[] = useMemo(() => {
     return deliveries
@@ -82,101 +56,141 @@ export default function Routes() {
   }, [deliveries]);
 
   function openMapbox(stops: Stop[]) {
-    // ✅ RouteMapbox lê sessionStorage
     sessionStorage.setItem("routergo_stops", JSON.stringify(stops));
     window.location.href = "/route-mapbox";
   }
 
-  async function gerarRotas() {
+  function buildUnroutedDeliveries(allDeliveries: DeliveryRow[], allRoutes: RouteRow[]) {
+    const routedIds = uniq(
+      (allRoutes || [])
+        .flatMap((r) => (Array.isArray(r.delivery_ids) ? r.delivery_ids : []))
+        .filter(Boolean)
+    );
+
+    const routedSet = new Set(routedIds);
+
+    // ✅ só entra no gerador o que ainda não está em nenhuma rota
+    return allDeliveries.filter((d) => !routedSet.has(d.id));
+  }
+
+  async function loadAll(andAutoGenerate = false) {
+    setLoading(true);
     try {
-      setLoading(true);
-
       const userId = await getUserId();
-      if (!userId) throw new Error("Você precisa estar logado.");
+      if (!userId) return;
 
-      if (usableStops.length < 2) {
-        throw new Error("Precisa de pelo menos 2 entregas com coordenadas para gerar rota.");
-      }
+      const d = await supabase
+        .from("deliveries")
+        .select("id,client_name,order_id,address_text,lat,lng,created_at")
+        .eq("user_id", userId)
+        .order("created_at", { ascending: false });
 
-      const generated = generateRoutesMVP(usableStops, {
-        maxStops,
-        radiusKm,
-      });
+      if (d.error) throw d.error;
 
-      if (!generated.length) throw new Error("Não consegui gerar rotas com esses parâmetros.");
-
-      // ✅ pega quantas rotas já existem pra continuar a numeração
-      const { count, error: countErr } = await supabase
+      const r = await supabase
         .from("routes")
-        .select("id", { count: "exact", head: true })
-        .eq("user_id", userId);
+        .select("id,name,delivery_ids,stops,total_est_km,created_at")
+        .eq("user_id", userId)
+        .order("created_at", { ascending: false });
 
-      if (countErr) throw countErr;
+      if (r.error) throw r.error;
 
-      const startIndex = (count || 0) + 1;
+      const dData = (d.data || []) as DeliveryRow[];
+      const rData = (r.data || []) as RouteRow[];
 
-      const rows = generated.map((r, idx) => {
-        const stops: Stop[] = r.stops.map((s, i) => ({
-          delivery_id: s.delivery_id,
-          lat: s.lat,
-          lng: s.lng,
-          label: `${i + 1}. ${s.label || "Parada"}`,
-        }));
+      setDeliveries(dData);
+      setRoutes(rData);
 
-        const delivery_ids = r.stops.map((s) => s.delivery_id).filter(Boolean) as string[];
+      // ✅ auto-gera apenas 1x por entrada na tela e só se tiver entregas novas
+      if (andAutoGenerate && !didAutoRef.current) {
+        didAutoRef.current = true;
+        await autoGenerateIfNeeded(userId, dData, rData);
+        // recarrega para mostrar as novas rotas
+        const rr = await supabase
+          .from("routes")
+          .select("id,name,delivery_ids,stops,total_est_km,created_at")
+          .eq("user_id", userId)
+          .order("created_at", { ascending: false });
 
-        return {
-          user_id: userId,
-          name: `Rota ${startIndex + idx}`,
-          delivery_ids,
-          stops,
-          total_est_km: Number.isFinite(r.totalKm) ? r.totalKm : null,
-        };
-      });
-
-      const ins = await supabase.from("routes").insert(rows);
-      if (ins.error) throw ins.error;
-
-      await loadAll();
+        if (!rr.error) setRoutes((rr.data || []) as any);
+      }
     } catch (e: any) {
-      alert(e?.message || String(e));
+      alert("Erro ao buscar dados: " + (e?.message || String(e)));
     } finally {
       setLoading(false);
     }
   }
 
+  async function autoGenerateIfNeeded(userId: string, dData: DeliveryRow[], rData: RouteRow[]) {
+    // pega entregas ainda não roteadas
+    const unrouted = buildUnroutedDeliveries(dData, rData);
+
+    // só conta as que têm coordenadas
+    const unroutedStops: MVPStop[] = unrouted
+      .filter((d) => d.lat != null && d.lng != null)
+      .map((d) => ({
+        delivery_id: d.id,
+        lat: d.lat as number,
+        lng: d.lng as number,
+        label: `${d.client_name} — ${d.order_id || ""}`.trim(),
+      }));
+
+    // se não tem pelo menos 2 pontos novos, não gera nada
+    if (unroutedStops.length < 2) return;
+
+    const generated = generateRoutesMVP(unroutedStops, { maxStops, radiusKm });
+    if (!generated.length) return;
+
+    // numeração sequencial baseada no total já existente no banco
+    const { count, error: countErr } = await supabase
+      .from("routes")
+      .select("id", { count: "exact", head: true })
+      .eq("user_id", userId);
+
+    if (countErr) throw countErr;
+
+    const startIndex = (count || 0) + 1;
+
+    const rows = generated.map((gr, idx) => {
+      const stops: Stop[] = gr.stops.map((s, i) => ({
+        delivery_id: s.delivery_id,
+        lat: s.lat,
+        lng: s.lng,
+        label: `${i + 1}. ${s.label || "Parada"}`,
+      }));
+
+      const delivery_ids = gr.stops.map((s) => s.delivery_id).filter(Boolean) as string[];
+
+      return {
+        user_id: userId,
+        name: `Rota ${startIndex + idx}`,
+        delivery_ids,
+        stops,
+        total_est_km: Number.isFinite(gr.totalKm) ? gr.totalKm : null,
+      };
+    });
+
+    const ins = await supabase.from("routes").insert(rows);
+    if (ins.error) throw ins.error;
+  }
+
+  useEffect(() => {
+    // ✅ ao entrar na aba, carrega e auto-gera somente se precisar
+    loadAll(true);
+  }, []);
+
   return (
     <div className="card">
       <div className="topbar">
         <h3>Rotas</h3>
-        <button className="ghost" onClick={loadAll}>
+        <button className="ghost" onClick={() => loadAll(false)}>
           {loading ? "..." : "Atualizar"}
         </button>
       </div>
 
-      <label>Máx paradas por rota</label>
-      <input
-        type="number"
-        value={maxStops}
-        min={2}
-        max={25}
-        onChange={(e) => setMaxStops(Number(e.target.value || 5))}
-      />
-
-      <label>Raio de agrupamento (km)</label>
-      <input
-        type="number"
-        value={radiusKm}
-        min={0.2}
-        step={0.1}
-        onChange={(e) => setRadiusKm(Number(e.target.value || 1.2))}
-      />
-
-      <div className="row" style={{ marginTop: 10, gap: 10, flexWrap: "wrap" }}>
-        <button onClick={gerarRotas} disabled={loading}>
-          Gerar rotas
-        </button>
-      </div>
+      <p className="muted" style={{ marginTop: 8 }}>
+        * Rotas são geradas automaticamente quando existem entregas novas (ainda não roteadas).
+      </p>
 
       <div className="list" style={{ marginTop: 12 }}>
         {routes.map((r) => {
