@@ -28,38 +28,38 @@ export default function Routes() {
   const [routes, setRoutes] = useState<RouteRow[]>([]);
   const [loading, setLoading] = useState(false);
 
-  async function getUser() {
+  async function getUserId() {
     const { data } = await supabase.auth.getSession();
-    return data.session?.user ?? null;
+    return data.session?.user?.id ?? null;
   }
 
   async function loadAll() {
     setLoading(true);
+    try {
+      const userId = await getUserId();
+      if (!userId) return;
 
-    const user = await getUser();
-    if (!user) {
+      const d = await supabase
+        .from("deliveries")
+        .select("id,client_name,order_id,address_text,lat,lng")
+        .eq("user_id", userId);
+
+      const r = await supabase
+        .from("routes")
+        .select("id,name,status,delivery_ids,stops,total_est_km,created_at,finished_at")
+        .eq("user_id", userId)
+        .order("created_at", { ascending: false });
+
+      if (d.error) throw d.error;
+      if (r.error) throw r.error;
+
+      setDeliveries((d.data || []) as any);
+      setRoutes((r.data || []) as any);
+    } catch (e: any) {
+      alert("Erro ao buscar rotas: " + (e?.message || String(e)));
+    } finally {
       setLoading(false);
-      return;
     }
-
-    const d = await supabase
-      .from("deliveries")
-      .select("id,client_name,order_id,address_text,lat,lng")
-      .eq("user_id", user.id);
-
-    const r = await supabase
-      .from("routes")
-      .select("id,name,status,delivery_ids,stops,total_est_km,created_at,finished_at")
-      .eq("user_id", user.id)
-      .order("created_at", { ascending: false });
-
-    setLoading(false);
-
-    if (d.error) alert(d.error.message);
-    if (r.error) alert(r.error.message);
-
-    setDeliveries((d.data || []) as any);
-    setRoutes((r.data || []) as any);
   }
 
   useEffect(() => {
@@ -72,11 +72,13 @@ export default function Routes() {
   );
 
   function openMapbox(stops: Array<{ lat: number; lng: number; label: string }>) {
+    // ✅ RouteMapbox LÊ routergo_stops do sessionStorage
     sessionStorage.setItem("routergo_stops", JSON.stringify(stops));
     window.location.href = "/route-mapbox";
   }
 
   function buildStopsFromRoute(route: RouteRow) {
+    // 1) Se já tem stops salvos no banco
     if (Array.isArray(route.stops) && route.stops.length) {
       return route.stops
         .map((s, idx) => ({
@@ -87,6 +89,7 @@ export default function Routes() {
         .filter((s) => Number.isFinite(s.lat) && Number.isFinite(s.lng));
     }
 
+    // 2) Senão, monta pelos delivery_ids
     const ids = Array.isArray(route.delivery_ids) ? route.delivery_ids : [];
     const list = ids.map((id) => byId.get(id)).filter(Boolean) as DeliveryRow[];
 
@@ -95,7 +98,7 @@ export default function Routes() {
       .map((d, idx) => ({
         lat: d.lat as number,
         lng: d.lng as number,
-        label: `${d.client_name} — ${d.order_id || ""}`,
+        label: `${idx + 1}. ${d.client_name} — ${d.order_id || ""}`.trim(),
       }));
   }
 
@@ -103,6 +106,7 @@ export default function Routes() {
     try {
       setLoading(true);
 
+      // ✅ sem paid_at, sem profiles, sem rpc
       const { error } = await supabase
         .from("routes")
         .update({
@@ -115,31 +119,42 @@ export default function Routes() {
 
       await loadAll();
     } catch (e: any) {
-      alert("Erro ao concluir rota: " + e.message);
+      alert("Erro ao concluir rota: " + (e?.message || String(e)));
     } finally {
       setLoading(false);
     }
   }
 
-  const novas = routes.filter((r) => (r.status || "ready") === "ready");
-  const andamento = routes.filter((r) =>
+  // ✅ separa por status
+  const rotasNovas = routes.filter((r) => (r.status || "ready") === "ready");
+  const rotasAndamento = routes.filter((r) =>
     ["assigned", "picked_up", "in_progress"].includes(r.status || "")
   );
-  const concluidas = routes.filter((r) => (r.status || "") === "done");
+  const rotasConcluidas = routes.filter((r) => (r.status || "") === "done");
 
   function Section({
     title,
+    subtitle,
     list,
     showConcluir,
   }: {
     title: string;
+    subtitle?: string;
     list: RouteRow[];
     showConcluir: boolean;
   }) {
     return (
       <div className="card" style={{ marginTop: 12 }}>
         <div className="topbar">
-          <h3>{title}</h3>
+          <div>
+            <h3 style={{ margin: 0 }}>{title}</h3>
+            {subtitle && (
+              <div className="muted" style={{ marginTop: 6 }}>
+                {subtitle}
+              </div>
+            )}
+          </div>
+
           <button className="ghost" onClick={loadAll}>
             {loading ? "..." : "Atualizar"}
           </button>
@@ -155,48 +170,36 @@ export default function Routes() {
                 <div className="row space">
                   <b>{r.name || "Rota"}</b>
                   <span className="muted">
-                    ~{r.total_est_km ? r.total_est_km.toFixed(2) : "0"} km
+                    ~{r.total_est_km != null ? r.total_est_km.toFixed(2) : "0"} km
                   </span>
                 </div>
 
                 <ol style={{ marginTop: 8 }}>
                   {stops.map((s, idx) => (
-                    <li key={idx}>{s.label}</li>
+                    <li key={idx}>{s.label || `Parada ${idx + 1}`}</li>
                   ))}
                 </ol>
 
-                <div className="row" style={{ gap: 10, marginTop: 10 }}>
-                  <button
-                    className="ghost"
-                    disabled={!canOpen}
-                    onClick={() => openMapbox(stops)}
-                  >
+                <div className="row" style={{ gap: 10, marginTop: 10, flexWrap: "wrap" }}>
+                  <button className="ghost" disabled={!canOpen} onClick={() => openMapbox(stops)}>
                     Ver rota
                   </button>
 
                   {showConcluir && (
-                    <button
-                      className="primary"
-                      disabled={loading}
-                      onClick={() => concluirRota(r.id)}
-                    >
+                    <button className="primary" disabled={loading} onClick={() => concluirRota(r.id)}>
                       Concluir
                     </button>
                   )}
 
                   {!canOpen && (
-                    <span className="muted">
-                      Precisa de pelo menos 2 paradas com coordenadas.
-                    </span>
+                    <span className="muted">Precisa de pelo menos 2 paradas com coordenadas.</span>
                   )}
                 </div>
               </div>
             );
           })}
 
-          {list.length === 0 && (
-            <p className="muted">Nenhuma rota aqui.</p>
-          )}
+          {list.length === 0 && <p className="muted">Nenhuma rota aqui.</p>}
         </div>
       </div>
     );
@@ -204,9 +207,26 @@ export default function Routes() {
 
   return (
     <div>
-      <Section title="Rotas novas" list={novas} showConcluir={true} />
-      <Section title="Em andamento" list={andamento} showConcluir={true} />
-      <Section title="Rotas concluídas" list={concluidas} showConcluir={false} />
+      <Section
+        title="Rotas novas"
+        subtitle="Criadas e aguardando andamento."
+        list={rotasNovas}
+        showConcluir={true}
+      />
+
+      <Section
+        title="Em andamento"
+        subtitle="Rotas já iniciadas."
+        list={rotasAndamento}
+        showConcluir={true}
+      />
+
+      <Section
+        title="Rotas concluídas"
+        subtitle="Finalizadas e arquivadas."
+        list={rotasConcluidas}
+        showConcluir={false}
+      />
     </div>
   );
 }
