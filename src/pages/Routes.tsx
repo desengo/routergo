@@ -50,6 +50,21 @@ function isOlderThan24h(iso?: string | null) {
   return Date.now() - t >= 24 * 60 * 60 * 1000;
 }
 
+function cleanText(s: string) {
+  return (s || "").replace(/\s+/g, " ").trim();
+}
+
+// ✅ monta um texto completo pro stop (cliente + pedido + endereço)
+function stopText(d: DeliveryRow) {
+  const name = cleanText(d.client_name || "Cliente");
+  const order = cleanText(d.order_id || "");
+  const addr = cleanText(d.address_text || "");
+
+  // exemplo: "José — 886 · Rua Daniel Ribeiro Calado, 235 - ..."
+  const left = order ? `${name} — ${order}` : name;
+  return addr ? `${left} · ${addr}` : left;
+}
+
 export default function Routes() {
   const [deliveries, setDeliveries] = useState<DeliveryRow[]>([]);
   const [routes, setRoutes] = useState<RouteRow[]>([]);
@@ -66,6 +81,7 @@ export default function Routes() {
 
       const d = await supabase
         .from("deliveries")
+        // ✅ garante que address_text vem
         .select("id,client_name,order_id,address_text,lat,lng,created_at")
         .eq("user_id", userId)
         .order("created_at", { ascending: false });
@@ -94,13 +110,9 @@ export default function Routes() {
     const userId = await getUserId();
     if (!userId) return;
 
-    const toAuto = list.filter(
-      (r) => r.status !== "done" && isOlderThan24h(r.created_at)
-    );
-
+    const toAuto = list.filter((r) => r.status !== "done" && isOlderThan24h(r.created_at));
     if (!toAuto.length) return;
 
-    // atualiza em lote
     const ids = toAuto.map((r) => r.id);
     const { error } = await supabase
       .from("routes")
@@ -109,12 +121,10 @@ export default function Routes() {
       .eq("user_id", userId);
 
     if (error) {
-      // não trava o app, só avisa
       console.warn("autoConclude error:", error.message);
       return;
     }
 
-    // recarrega depois da atualização
     await loadAll();
   }
 
@@ -125,23 +135,17 @@ export default function Routes() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // quando routes muda, tenta auto-concluir 24h (1 vez por carregamento)
   useEffect(() => {
     if (!routes.length) return;
     autoConcludeOldRoutes(routes);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [routes.length]);
 
-  const byId = useMemo(
-    () => new Map(deliveries.map((d) => [d.id, d] as const)),
-    [deliveries]
-  );
+  const byId = useMemo(() => new Map(deliveries.map((d) => [d.id, d] as const)), [deliveries]);
 
   const usedDeliveryIds = useMemo(() => {
     const set = new Set<string>();
-    routes.forEach((r) => {
-      (r.delivery_ids || []).forEach((id) => set.add(id));
-    });
+    routes.forEach((r) => (r.delivery_ids || []).forEach((id) => set.add(id)));
     return set;
   }, [routes]);
 
@@ -151,6 +155,7 @@ export default function Routes() {
   }
 
   function buildStopsFromRoute(route: RouteRow) {
+    // ✅ preferir stops salvos
     if (Array.isArray(route.stops) && route.stops.length) {
       return route.stops
         .map((s, idx) => ({
@@ -161,6 +166,7 @@ export default function Routes() {
         .filter((s) => Number.isFinite(s.lat) && Number.isFinite(s.lng));
     }
 
+    // fallback: monta pelos delivery_ids com address_text
     const ids = Array.isArray(route.delivery_ids) ? route.delivery_ids : [];
     const list = ids.map((id) => byId.get(id)).filter(Boolean) as DeliveryRow[];
 
@@ -169,7 +175,8 @@ export default function Routes() {
       .map((d, idx) => ({
         lat: d.lat as number,
         lng: d.lng as number,
-        label: `${idx + 1}. ${d.client_name} — ${d.order_id || ""}`.trim(),
+        // ✅ inclui endereço no label
+        label: `${idx + 1}. ${stopText(d)}`,
       }));
   }
 
@@ -242,7 +249,6 @@ export default function Routes() {
       const userId = await getUserId();
       if (!userId) throw new Error("Você precisa estar logado.");
 
-      // pega entregas com coordenadas que ainda não foram usadas em nenhuma rota
       const available = deliveries.filter(
         (d) => d.lat != null && d.lng != null && !usedDeliveryIds.has(d.id)
       );
@@ -252,17 +258,16 @@ export default function Routes() {
         return;
       }
 
-      // montar stops
+      // ✅ stops agora já carregam label com endereço
       const stops = available.map((d) => ({
         delivery_id: d.id,
         lat: d.lat as number,
         lng: d.lng as number,
-        label: `${d.client_name} — ${d.order_id || ""}`.trim(),
+        label: stopText(d),
       }));
 
       const groups = generateRoutesMVP(stops, { maxStops, radiusKm });
 
-      // define o próximo número com base no maior "Rota X" existente
       const maxExisting = routes
         .map((r) => parseRouteNumber(r.name))
         .filter((n): n is number => typeof n === "number")
@@ -272,20 +277,21 @@ export default function Routes() {
 
       const inserts = groups.map((g) => {
         const delivery_ids = g.stops.map((s) => s.delivery_id!).filter(Boolean);
-        const payload = {
+
+        return {
           user_id: userId,
           name: `Rota ${next++}`,
           status: "new",
           delivery_ids,
+          // ✅ salva stops com label completo (com endereço)
           stops: g.stops.map((s, idx) => ({
             delivery_id: s.delivery_id,
             lat: s.lat,
             lng: s.lng,
-            label: `${idx + 1}. ${s.label || `Parada ${idx + 1}`}`.trim(),
+            label: `${idx + 1}. ${s.label || `Parada ${idx + 1}`}`,
           })),
           total_est_km: Number(g.totalKm.toFixed(3)),
         };
-        return payload;
       });
 
       const { error } = await supabase.from("routes").insert(inserts);
@@ -310,12 +316,13 @@ export default function Routes() {
 
     return (
       <div
-        key={r.id}
-        className={"item col"}
+        className="item col"
         style={
           r.status === "done"
             ? {
-                border: isAuto ? "1px solid rgba(255,210,0,.35)" : "1px solid rgba(24,255,109,.25)",
+                border: isAuto
+                  ? "1px solid rgba(255,210,0,.35)"
+                  : "1px solid rgba(24,255,109,.25)",
                 background: isAuto ? "rgba(255,210,0,.06)" : undefined,
               }
             : undefined
