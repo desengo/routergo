@@ -237,7 +237,7 @@ export default function Routes() {
 
                   {showPay && (
                     <button className="primary" disabled={loading} onClick={() => payRoute(r.id)}>
-                      Pagar rota
+                      Concluir
                     </button>
                   )}
 
