@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { supabase } from "../lib/supabase";
 import { generateRoutesMVP, Stop as MVPStop } from "../lib/routing";
 
@@ -32,28 +32,21 @@ function uniq<T>(arr: T[]) {
   return Array.from(new Set(arr));
 }
 
+function oneLine(s: string) {
+  return (s || "").replace(/\s+/g, " ").trim();
+}
+
 export default function Routes() {
   const [deliveries, setDeliveries] = useState<DeliveryRow[]>([]);
   const [routes, setRoutes] = useState<RouteRow[]>([]);
   const [loading, setLoading] = useState(false);
 
-  // parâmetros do MVP (pode manter hidden se quiser)
+  // parâmetros do MVP
   const [maxStops] = useState(5);
   const [radiusKm] = useState(1.2);
 
-  // ✅ evita rodar auto-geração em loop (StrictMode chama useEffect 2x no dev)
+  // evita rodar auto-geração em loop (StrictMode no dev)
   const didAutoRef = useRef(false);
-
-  const usableStops: MVPStop[] = useMemo(() => {
-    return deliveries
-      .filter((d) => d.lat != null && d.lng != null)
-      .map((d) => ({
-        delivery_id: d.id,
-        lat: d.lat as number,
-        lng: d.lng as number,
-        label: `${d.client_name} — ${d.order_id || ""}`.trim(),
-      }));
-  }, [deliveries]);
 
   function openMapbox(stops: Stop[]) {
     sessionStorage.setItem("routergo_stops", JSON.stringify(stops));
@@ -66,10 +59,7 @@ export default function Routes() {
         .flatMap((r) => (Array.isArray(r.delivery_ids) ? r.delivery_ids : []))
         .filter(Boolean)
     );
-
     const routedSet = new Set(routedIds);
-
-    // ✅ só entra no gerador o que ainda não está em nenhuma rota
     return allDeliveries.filter((d) => !routedSet.has(d.id));
   }
 
@@ -101,11 +91,10 @@ export default function Routes() {
       setDeliveries(dData);
       setRoutes(rData);
 
-      // ✅ auto-gera apenas 1x por entrada na tela e só se tiver entregas novas
       if (andAutoGenerate && !didAutoRef.current) {
         didAutoRef.current = true;
         await autoGenerateIfNeeded(userId, dData, rData);
-        // recarrega para mostrar as novas rotas
+
         const rr = await supabase
           .from("routes")
           .select("id,name,delivery_ids,stops,total_est_km,created_at")
@@ -122,26 +111,23 @@ export default function Routes() {
   }
 
   async function autoGenerateIfNeeded(userId: string, dData: DeliveryRow[], rData: RouteRow[]) {
-    // pega entregas ainda não roteadas
     const unrouted = buildUnroutedDeliveries(dData, rData);
 
-    // só conta as que têm coordenadas
     const unroutedStops: MVPStop[] = unrouted
       .filter((d) => d.lat != null && d.lng != null)
       .map((d) => ({
         delivery_id: d.id,
         lat: d.lat as number,
         lng: d.lng as number,
-        label: `${d.client_name} — ${d.order_id || ""}`.trim(),
+        // ✅ label com endereço (bonito e útil)
+        label: oneLine(`${d.client_name} — ${d.order_id || "—"} · ${d.address_text || ""}`),
       }));
 
-    // se não tem pelo menos 2 pontos novos, não gera nada
     if (unroutedStops.length < 2) return;
 
     const generated = generateRoutesMVP(unroutedStops, { maxStops, radiusKm });
     if (!generated.length) return;
 
-    // numeração sequencial baseada no total já existente no banco
     const { count, error: countErr } = await supabase
       .from("routes")
       .select("id", { count: "exact", head: true })
@@ -152,11 +138,12 @@ export default function Routes() {
     const startIndex = (count || 0) + 1;
 
     const rows = generated.map((gr, idx) => {
-      const stops: Stop[] = gr.stops.map((s, i) => ({
+      const stops: Stop[] = gr.stops.map((s) => ({
         delivery_id: s.delivery_id,
         lat: s.lat,
         lng: s.lng,
-        label: `${i + 1}. ${s.label || "Parada"}`,
+        // ✅ sem "1." no texto (o <ol> já numera)
+        label: oneLine(s.label || "Parada"),
       }));
 
       const delivery_ids = gr.stops.map((s) => s.delivery_id).filter(Boolean) as string[];
@@ -175,7 +162,6 @@ export default function Routes() {
   }
 
   useEffect(() => {
-    // ✅ ao entrar na aba, carrega e auto-gera somente se precisar
     loadAll(true);
   }, []);
 
@@ -201,7 +187,13 @@ export default function Routes() {
             <div key={r.id} className="item col">
               <div className="row space">
                 <b>{r.name || "Rota"}</b>
-                <span className="muted">~{r.total_est_km ?? "?"} km</span>
+                <span className="muted">
+                  ~
+                  {typeof r.total_est_km === "number"
+                    ? r.total_est_km.toFixed(2)
+                    : "?"}{" "}
+                  km
+                </span>
               </div>
 
               <ol style={{ marginTop: 8 }}>
