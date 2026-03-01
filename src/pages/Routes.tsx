@@ -13,19 +13,14 @@ type DeliveryRow = {
 
 type RouteStop = { lat: number; lng: number; label?: string; delivery_id?: string };
 
-type RouteStatus = "ready" | "assigned" | "picked_up" | "in_progress" | "done" | string;
-
 type RouteRow = {
   id: string;
   name: string | null;
-  delivery_ids?: string[];
-  stops?: RouteStop[];
+  status: string | null; // "ready" | "assigned" | "picked_up" | "in_progress" | "done"
+  delivery_ids?: string[] | null;
+  stops?: RouteStop[] | null;
   total_est_km: number | null;
   created_at?: string;
-
-  // opcionais (podem não existir no seu schema ainda)
-  status?: RouteStatus | null;
-  paid_at?: string | null;
   finished_at?: string | null;
 };
 
@@ -48,57 +43,24 @@ export default function Routes() {
       return;
     }
 
-    // ---- Deliveries (base) ----
     const d = await supabase
       .from("deliveries")
       .select("id,client_name,order_id,address_text,lat,lng")
       .eq("user_id", user.id);
 
-    if (d.error) {
-      setLoading(false);
-      alert("Erro ao buscar entregas: " + d.error.message);
-      return;
-    }
-
-    setDeliveries((d.data || []) as any);
-
-    // ---- Routes (tenta com colunas extras: status/paid_at/finished_at) ----
-    const selectWithExtras =
-      "id,name,delivery_ids,stops,total_est_km,created_at,status,paid_at,finished_at";
-
-    const selectBase = "id,name,delivery_ids,stops,total_est_km,created_at";
-
-    let r = await supabase
+    const r = await supabase
       .from("routes")
-      .select(selectWithExtras)
+      .select("id,name,status,delivery_ids,stops,total_est_km,created_at,finished_at")
       .eq("user_id", user.id)
       .order("created_at", { ascending: false });
 
-    // fallback se sua tabela ainda não tem status/paid_at/finished_at
-    if (r.error && /column .* does not exist/i.test(r.error.message)) {
-      r = await supabase
-        .from("routes")
-        .select(selectBase)
-        .eq("user_id", user.id)
-        .order("created_at", { ascending: false });
-    }
-
     setLoading(false);
 
-    if (r.error) {
-      alert("Erro ao buscar rotas: " + r.error.message);
-      return;
-    }
+    if (d.error) alert("Erro ao buscar entregas: " + d.error.message);
+    if (r.error) alert("Erro ao buscar rotas: " + r.error.message);
 
-    // normaliza status default
-    const normalized = (r.data || []).map((row: any) => ({
-      ...row,
-      status: row.status ?? "ready",
-      paid_at: row.paid_at ?? null,
-      finished_at: row.finished_at ?? null,
-    }));
-
-    setRoutes(normalized as RouteRow[]);
+    setDeliveries((d.data || []) as any);
+    setRoutes((r.data || []) as any);
   }
 
   useEffect(() => {
@@ -108,23 +70,24 @@ export default function Routes() {
   const byId = useMemo(() => new Map(deliveries.map((d) => [d.id, d] as const)), [deliveries]);
 
   function openMapbox(stops: Array<{ lat: number; lng: number; label: string }>) {
+    // ✅ RouteMapbox.tsx já lê do sessionStorage("routergo_stops")
     sessionStorage.setItem("routergo_stops", JSON.stringify(stops));
-    window.location.href = `/route-mapbox`;
+    window.location.href = "/route-mapbox";
   }
 
   function buildStopsFromRoute(route: RouteRow) {
-    // se rota já tem stops salvos
+    // 1) se tiver stops salvos na route, usa eles
     if (Array.isArray(route.stops) && route.stops.length) {
       return route.stops
         .map((s, idx) => ({
           lat: Number(s.lat),
           lng: Number(s.lng),
-          label: s.label || `Parada ${idx + 1}`,
+          label: (s.label && String(s.label)) || `Parada ${idx + 1}`,
         }))
         .filter((s) => Number.isFinite(s.lat) && Number.isFinite(s.lng));
     }
 
-    // senão monta pelos delivery_ids
+    // 2) senão, monta via delivery_ids + deliveries
     const ids = Array.isArray(route.delivery_ids) ? route.delivery_ids : [];
     const list = ids.map((id) => byId.get(id)).filter(Boolean) as DeliveryRow[];
 
@@ -133,89 +96,78 @@ export default function Routes() {
       .map((d, idx) => ({
         lat: d.lat as number,
         lng: d.lng as number,
-        label: `${idx + 1}. ${d.client_name} — ${d.order_id}`,
+        label: `${idx + 1}. ${d.client_name} — ${d.order_id || ""}`.trim(),
       }));
   }
 
-  function isPaid(r: RouteRow) {
-    return !!r.paid_at;
-  }
-
-  async function payRoute(routeId: string) {
+  async function concluirRota(routeId: string) {
     try {
       setLoading(true);
 
-      // tenta marcar paid_at = agora (precisa existir a coluna)
       const { error } = await supabase
         .from("routes")
-        .update({ paid_at: new Date().toISOString() } as any)
+        .update({
+          status: "done",
+          finished_at: new Date().toISOString(),
+        })
         .eq("id", routeId);
 
-      if (error) {
-        // se não existir paid_at, avisa o que falta
-        if (/column .*paid_at.* does not exist/i.test(error.message)) {
-          alert(
-            "Sua tabela 'routes' não tem a coluna 'paid_at'.\n" +
-              "Crie uma coluna paid_at (timestamp) para registrar pagamento."
-          );
-          return;
-        }
-        throw error;
-      }
+      if (error) throw error;
 
-      await loadAll();
+      await loadAll(); // ✅ some do card atual e aparece em Concluídas
     } catch (e: any) {
-      alert("Erro ao pagar rota: " + (e?.message || String(e)));
+      alert("Erro ao concluir rota: " + (e?.message || String(e)));
     } finally {
       setLoading(false);
     }
   }
 
-  // ---- separação por status ----
-  const groups = useMemo(() => {
-    const novas: RouteRow[] = [];
-    const andamento: RouteRow[] = [];
-    const concluidas: RouteRow[] = [];
+  const novas = useMemo(
+    () => routes.filter((r) => (r.status || "ready") === "ready"),
+    [routes]
+  );
 
-    for (const r of routes) {
-      const s = (r.status || "ready").toLowerCase();
+  const andamento = useMemo(
+    () =>
+      routes.filter((r) =>
+        ["assigned", "picked_up", "in_progress"].includes(r.status || "")
+      ),
+    [routes]
+  );
 
-      if (s === "done") concluidas.push(r);
-      else if (s === "in_progress" || s === "picked_up" || s === "assigned") andamento.push(r);
-      else novas.push(r);
-    }
-
-    return { novas, andamento, concluidas };
-  }, [routes]);
+  const concluidas = useMemo(
+    () => routes.filter((r) => (r.status || "") === "done"),
+    [routes]
+  );
 
   function Section({
     title,
     subtitle,
-    items,
+    list,
+    showConcluir,
   }: {
     title: string;
-    subtitle?: string;
-    items: RouteRow[];
+    subtitle: string;
+    list: RouteRow[];
+    showConcluir: boolean;
   }) {
     return (
       <div className="card" style={{ marginTop: 12 }}>
-        <div className="row space">
-          <div>
-            <h3 style={{ margin: 0 }}>{title}</h3>
-            {subtitle && <div className="muted" style={{ marginTop: 4 }}>{subtitle}</div>}
-          </div>
+        <div className="topbar">
+          <h3>{title}</h3>
           <button className="ghost" onClick={loadAll}>
             {loading ? "..." : "Atualizar"}
           </button>
         </div>
 
+        <p className="muted" style={{ marginTop: 6 }}>
+          {subtitle}
+        </p>
+
         <div className="list" style={{ marginTop: 12 }}>
-          {items.map((r) => {
+          {list.map((r) => {
             const stops = buildStopsFromRoute(r);
             const canOpen = stops.length >= 2;
-
-            const notFinished = (r.status || "ready").toLowerCase() !== "done";
-            const showPay = notFinished && !isPaid(r);
 
             return (
               <div key={r.id} className="item col">
@@ -230,30 +182,39 @@ export default function Routes() {
                   ))}
                 </ol>
 
-                <div className="row" style={{ gap: 10, marginTop: 10, flexWrap: "wrap" }}>
-                  <button className="ghost" disabled={!canOpen} onClick={() => openMapbox(stops)}>
+                <div
+                  className="row"
+                  style={{ gap: 10, marginTop: 10, flexWrap: "wrap" }}
+                >
+                  <button
+                    className="ghost"
+                    disabled={!canOpen}
+                    onClick={() => openMapbox(stops)}
+                  >
                     Ver rota
                   </button>
 
-                  {showPay && (
-                    <button className="primary" disabled={loading} onClick={() => payRoute(r.id)}>
+                  {showConcluir && (
+                    <button
+                      className="primary"
+                      disabled={loading}
+                      onClick={() => concluirRota(r.id)}
+                    >
                       Concluir
                     </button>
                   )}
 
-                  {!showPay && isPaid(r) && (
-                    <span className="muted">Pago ✅</span>
-                  )}
-
                   {!canOpen && (
-                    <span className="muted">Precisa de pelo menos 2 paradas com coordenadas.</span>
+                    <span className="muted">
+                      Precisa de pelo menos 2 paradas com coordenadas.
+                    </span>
                   )}
                 </div>
               </div>
             );
           })}
 
-          {items.length === 0 && <p className="muted">Nada aqui ainda.</p>}
+          {list.length === 0 && <p className="muted">Nenhuma rota aqui.</p>}
         </div>
       </div>
     );
@@ -264,19 +225,22 @@ export default function Routes() {
       <Section
         title="Rotas novas"
         subtitle="Criadas e aguardando andamento."
-        items={groups.novas}
+        list={novas}
+        showConcluir={true}
       />
 
       <Section
-        title="Rotas em andamento"
-        subtitle="Já iniciadas/atribuídas, ainda não finalizadas."
-        items={groups.andamento}
+        title="Em andamento"
+        subtitle="Rotas atribuídas/retiradas/em rota."
+        list={andamento}
+        showConcluir={true}
       />
 
       <Section
-        title="Rotas concluídas"
-        subtitle="Finalizadas."
-        items={groups.concluidas}
+        title="Concluídas"
+        subtitle="Rotas finalizadas."
+        list={concluidas}
+        showConcluir={false}
       />
     </div>
   );
