@@ -38,7 +38,7 @@ export default function Login() {
       <div className="card" style={{ maxWidth: 520, margin: "60px auto" }}>
         <div className="loginHeader">
           <img
-            src="https://i.ibb.co/GfhqSrxm/file-00000000a9c871f589252b63d66b7839.png"
+            src="https://i.ibb.co/DPYsRh9r/file-00000000a9c871f589252b63d66b7839-removebg-preview.png"
             alt="RouterGo"
             className="loginLogo"
           />
