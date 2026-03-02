@@ -2,6 +2,7 @@ import React, { useState } from "react";
 import { supabase } from "../lib/supabase";
 import Deliveries from "./Deliveries";
 import Routes from "./Routes";
+import logo from "../assets/logo.png";
 
 type Tab = "deliveries" | "routes";
 
@@ -12,7 +13,7 @@ export default function Dashboard() {
     <div className="wrap">
       <div className="topbar">
         <div className="brand">
-          <img src="/logo.png" alt="RouterGo" className="brandLogo" />
+          <img src={logo} alt="RouterGo" className="brandLogo" />
           <h2 className="brandTitle">RouterGo</h2>
         </div>
 
