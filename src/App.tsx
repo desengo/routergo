@@ -5,6 +5,7 @@ import { supabase } from "./lib/supabase";
 import Login from "./pages/Login";
 import Dashboard from "./pages/Dashboard";
 import RouteMapbox from "./pages/RouteMapbox";
+import DriverApp from "./pages/DriverApp";
 
 export default function App() {
   const [session, setSession] = useState<any>(null);
@@ -28,6 +29,10 @@ export default function App() {
     <RRoutes>
       <Route path="/" element={<Dashboard />} />
       <Route path="/route-mapbox" element={<RouteMapbox />} />
+
+      {/* NOVO: app do entregador */}
+      <Route path="/driver" element={<DriverApp />} />
+
       <Route path="*" element={<Navigate to="/" replace />} />
     </RRoutes>
   );
