@@ -314,4 +314,28 @@ h3 {
   height: 1px;
   background: linear-gradient(90deg, transparent, rgba(24,255,109,0.22), transparent);
   margin: 14px 0;
+}/* ===== LOGO ===== */
+
+.loginHeader {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.loginLogo {
+  width: 60px;
+  height: 60px;
+  object-fit: contain;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.brandLogo {
+  width: 40px;
+  height: 40px;
+  object-fit: contain;
 }
