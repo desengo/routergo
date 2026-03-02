@@ -13,10 +13,12 @@ export default function Dashboard() {
       <div className="topbar">
         <div className="brand">
           <img
-            src="https://i.ibb.co/GfhqSrxm/file-00000000a9c871f589252b63d66b7839.png11"
-            alt="RouterGo"
-            className="brandLogo"
-          />
+           <div className="brand">
+  <img
+    src="https://i.ibb.co/GfhqSrxm/file-00000000a9c871f589252b63d66b7839.png"
+    alt="RouterGo"
+    className="brandLogo"
+  />
           <h2 className="brandTitle">RouterGo</h2>
         </div>
 
