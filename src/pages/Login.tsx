@@ -1,6 +1,5 @@
 import React, { useState } from "react";
 import { supabase } from "../lib/supabase";
-import logo from "../assets/logo.png";
 
 export default function Login() {
   const [email, setEmail] = useState("");
@@ -17,7 +16,6 @@ export default function Login() {
     });
 
     setLoading(false);
-
     if (error) alert(error.message);
   }
 
@@ -30,7 +28,6 @@ export default function Login() {
     });
 
     setLoading(false);
-
     if (error) alert(error.message);
     else alert("Conta criada com sucesso!");
   }
@@ -39,7 +36,6 @@ export default function Login() {
     <div className="wrap">
       <div className="card" style={{ maxWidth: 520, margin: "60px auto" }}>
         <div className="loginHeader">
-          <img src={logo} alt="RouterGo" className="loginLogo" />
           <div>
             <h2 style={{ margin: 0 }}>RouterGo</h2>
             <div className="muted" style={{ marginTop: 6 }}>
@@ -50,10 +46,7 @@ export default function Login() {
 
         <form onSubmit={signIn} style={{ marginTop: 20 }}>
           <label>Email</label>
-          <input
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-          />
+          <input value={email} onChange={(e) => setEmail(e.target.value)} />
 
           <label>Senha</label>
           <input
@@ -67,12 +60,7 @@ export default function Login() {
               {loading ? "..." : "Entrar"}
             </button>
 
-            <button
-              type="button"
-              className="ghost"
-              onClick={signUp}
-              disabled={loading}
-            >
+            <button type="button" className="ghost" onClick={signUp} disabled={loading}>
               Criar conta
             </button>
           </div>
