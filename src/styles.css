@@ -32,4 +32,35 @@
   object-fit: cover;
   box-shadow: 0 0 26px rgba(24, 255, 109, 0.28);
   border: 1px solid rgba(24, 255, 109, 0.22);
+}.brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.brandLogo {
+  width: 36px;
+  height: 36px;
+  object-fit: contain;
+  border-radius: 10px;
+  box-shadow: 0 0 18px rgba(24,255,109,0.25);
+}
+
+.brandTitle {
+  margin: 0;
+  font-weight: 900;
+}
+
+.loginHeader {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.loginLogo {
+  width: 60px;
+  height: 60px;
+  object-fit: contain;
+  border-radius: 16px;
+  box-shadow: 0 0 28px rgba(24,255,109,0.28);
 }
