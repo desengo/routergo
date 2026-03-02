@@ -11,17 +11,28 @@ export default function Dashboard() {
   return (
     <div className="wrap">
       <div className="topbar">
-        <h2>RouterGo</h2>
+        <div className="brand">
+          <img src="/logo.png" alt="RouterGo" className="brandLogo" />
+          <h2 className="brandTitle">RouterGo</h2>
+        </div>
+
         <button className="ghost" onClick={() => supabase.auth.signOut()}>
           Sair
         </button>
       </div>
 
       <div className="tabs">
-        <button className={tab === "deliveries" ? "on" : ""} onClick={() => setTab("deliveries")}>
+        <button
+          className={tab === "deliveries" ? "on" : ""}
+          onClick={() => setTab("deliveries")}
+        >
           📦 Entregas
         </button>
-        <button className={tab === "routes" ? "on" : ""} onClick={() => setTab("routes")}>
+
+        <button
+          className={tab === "routes" ? "on" : ""}
+          onClick={() => setTab("routes")}
+        >
           🚚 Rotas
         </button>
       </div>
