@@ -12,8 +12,6 @@ export default function Dashboard() {
     <div className="wrap">
       <div className="topbar">
         <div className="brand">
-          <img
-           <div className="brand">
   <img
      src="https://i.ibb.co/DPYsRh9r/file-00000000a9c871f589252b63d66b7839-removebg-preview.png"/>
      
