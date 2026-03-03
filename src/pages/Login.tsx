@@ -1,82 +1,44 @@
-import React, { useState } from "react";
-import { supabase } from "../lib/supabase";
+import React, { useEffect, useState } from "react";
+import { Routes as RRoutes, Route, Navigate, useLocation } from "react-router-dom";
+import { supabase } from "./lib/supabase";
 
-export default function Login() {
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [loading, setLoading] = useState(false);
+import Login from "./pages/Login";
+import Dashboard from "./pages/Dashboard";
+import RouteMapbox from "./pages/RouteMapbox";
+import DriverApp from "./pages/DriverApp";
 
-  async function signIn(e: React.FormEvent) {
-    e.preventDefault();
-    setLoading(true);
+export default function App() {
+  const [session, setSession] = useState<any>(null);
+  const [ready, setReady] = useState(false);
+  const location = useLocation();
 
-    const { error } = await supabase.auth.signInWithPassword({
-      email: email.trim(),
-      password,
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data }) => {
+      setSession(data.session);
+      setReady(true);
     });
 
-    setLoading(false);
-    if (error) alert(error.message);
-  }
+    const { data: sub } = supabase.auth.onAuthStateChange((_e, s) => setSession(s));
+    return () => sub.subscription.unsubscribe();
+  }, []);
 
-  async function signUp() {
-    setLoading(true);
+  if (!ready) return null;
 
-    const { error } = await supabase.auth.signUp({
-      email: email.trim(),
-      password,
-    });
+  // Sem sessão: login
+  if (!session) return <Login />;
 
-    setLoading(false);
-
-    if (error) alert(error.message);
-    else alert("Conta criada com sucesso!");
+  // ✅ Se estiver logado e abrir em /driver (ou /route-mapbox) por engano,
+  // empurra pro Dashboard ("/") pra você sempre enxergar o painel.
+  if (location.pathname !== "/" && location.pathname !== "/route-mapbox" && location.pathname !== "/driver") {
+    return <Navigate to="/" replace />;
   }
 
   return (
-    <div className="wrap">
-      <div className="card" style={{ maxWidth: 520, margin: "60px auto" }}>
-        <div className="loginHeader">
-          <img
-            src="https://i.ibb.co/DPYsRh9r/file-00000000a9c871f589252b63d66b7839-removebg-preview.png"
-            alt="RouterGo"
-            className="loginLogo"
-          />
-          <div>
-            <h2 style={{ margin: 0 }}>RouterGo</h2>
-            <div className="muted" style={{ marginTop: 6 }}>
-              Gestão inteligente de entregas
-            </div>
-          </div>
-        </div>
-
-        <form onSubmit={signIn} style={{ marginTop: 20 }}>
-          <label>Email</label>
-          <input value={email} onChange={(e) => setEmail(e.target.value)} />
-
-          <label>Senha</label>
-          <input
-            type="password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-          />
-
-          <div className="row" style={{ gap: 10, marginTop: 14 }}>
-            <button className="primary" type="submit" disabled={loading}>
-              {loading ? "..." : "Entrar"}
-            </button>
-
-            <button
-              type="button"
-              className="ghost"
-              onClick={signUp}
-              disabled={loading}
-            >
-              Criar conta
-            </button>
-          </div>
-        </form>
-      </div>
-    </div>
+    <RRoutes>
+      <Route path="/" element={<Dashboard />} />
+      <Route path="/route-mapbox" element={<RouteMapbox />} />
+      <Route path="/driver" element={<DriverApp />} />
+      <Route path="*" element={<Navigate to="/" replace />} />
+    </RRoutes>
   );
 }
