@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { supabase } from "../lib/supabase";
+import { autoGenerateRoutesIfNeeded } from "../lib/autoDispatch";
 
 type DeliveryRow = {
   id: string;
@@ -160,6 +161,13 @@ export default function Deliveries() {
       setNumber("");
 
       await loadDeliveries();
+
+      // ✅ ETAPA 2: gerar rotas automaticamente (se modo ≠ manual)
+      try {
+        await autoGenerateRoutesIfNeeded();
+      } catch (err) {
+        console.warn("Auto-generate routes falhou:", err);
+      }
     } catch (e: any) {
       alert(e?.message || String(e));
     } finally {
