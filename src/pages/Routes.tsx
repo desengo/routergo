@@ -70,9 +70,9 @@ function parseRouteNumber(name?: string | null) {
 }
 
 function intervalMsForDemand(mode: DemandMode) {
-  if (mode === "alta") return 10_000;
-  if (mode === "media") return 15_000;
-  if (mode === "baixa") return 25_000;
+  if (mode === "alta") return 15_000;
+  if (mode === "media") return 30_000;
+  if (mode === "baixa") return 60_000;
   return null; // manual => não roda
 }
 
