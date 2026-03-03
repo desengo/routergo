@@ -90,6 +90,9 @@ export default function Routes() {
   // evita overlaps de timer
   const tickRunningRef = useRef(false);
 
+  // 🔥 NOVO: assinatura do “estado” das entregas disponíveis
+  const lastAvailableFingerprintRef = useRef<string>("");
+
   const byId = useMemo(
     () => new Map(deliveries.map((d) => [d.id, d] as const)),
     [deliveries]
@@ -155,10 +158,7 @@ export default function Routes() {
       try {
         const s = await getCompanySettings();
         setDemandMode(s.demand_mode);
-        // opcional: se você quiser que radiusKm do algoritmo manual siga o settings:
-        // setRadiusKm(Number(s.delivery_radius_km || 1.2));
       } catch {
-        // se der erro, fica no padrão "media"
         setDemandMode("media");
       }
     }
@@ -179,17 +179,63 @@ export default function Routes() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // 🔥 varredura inteligente por demanda (sem mudar visual)
+  // 🔥 NOVO: calcula fingerprint das entregas disponíveis (sem query extra)
+  function computeAvailableFingerprint(d: DeliveryRow[], r: RouteRow[]) {
+    const used = new Set<string>();
+    r.forEach((rt) => (rt.delivery_ids || []).forEach((id) => used.add(id)));
+
+    const available = d.filter(
+      (x) => x.lat != null && x.lng != null && !used.has(x.id)
+    );
+
+    // se tiver < 2, a gente “zera” fingerprint pra não ficar rodando
+    if (available.length < 2) return { fingerprint: "", availableCount: available.length };
+
+    // assinatura: ids + created_at (ou "0" se não tiver)
+    // ordena pra ficar estável
+    const fingerprint = available
+      .map((x) => `${x.id}:${x.created_at || "0"}`)
+      .sort()
+      .join("|");
+
+    return { fingerprint, availableCount: available.length };
+  }
+
+  // 🔥 varredura inteligente econômica
   useEffect(() => {
     const ms = intervalMsForDemand(demandMode);
     if (!ms) return; // manual => não roda
 
     const timer = window.setInterval(async () => {
       if (tickRunningRef.current) return;
+      if (loading) return;
+
       tickRunningRef.current = true;
 
       try {
+        // 1) Atualiza dados primeiro (uma vez)
+        await loadAll();
+
+        // 2) Verifica se mudou algo relevante (sem query extra)
+        const { fingerprint, availableCount } = computeAvailableFingerprint(deliveries, routes);
+
+        // Se <2 disponíveis: não gera
+        if (availableCount < 2) {
+          lastAvailableFingerprintRef.current = "";
+          return;
+        }
+
+        // Se não mudou: não chama autoGenerate (economiza)
+        if (fingerprint && fingerprint === lastAvailableFingerprintRef.current) {
+          return;
+        }
+
+        // Mudou: salva fingerprint e gera
+        lastAvailableFingerprintRef.current = fingerprint;
+
         await autoGenerateRoutesIfNeeded();
+
+        // 3) Recarrega (pra refletir novas rotas)
         await loadAll();
       } catch {
         // silêncio: MVP não trava por falha
@@ -200,7 +246,7 @@ export default function Routes() {
 
     return () => window.clearInterval(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [demandMode]);
+  }, [demandMode, loading]);
 
   useEffect(() => {
     if (!routes.length) return;
