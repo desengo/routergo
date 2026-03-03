@@ -1,7 +1,12 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { supabase } from "../lib/supabase";
 
-type Stop = { lat: number; lng: number; label?: string; delivery_id?: string };
+type Stop = {
+  lat: number;
+  lng: number;
+  label?: string;
+  delivery_id?: string;
+};
 
 type RouteRow = {
   id: string;
@@ -10,15 +15,19 @@ type RouteRow = {
   status: "new" | "in_progress" | "done";
   stops: Stop[] | null;
   total_est_km: number | null;
+
   assigned_driver_id: string | null;
   assigned_at: string | null;
+
   started_at: string | null;
   finished_at: string | null;
+
   created_at?: string;
 };
 
 async function getMe() {
-  const { data } = await supabase.auth.getUser();
+  const { data, error } = await supabase.auth.getUser();
+  if (error) throw error;
   return data.user ?? null;
 }
 
@@ -53,14 +62,16 @@ export default function DriverApp() {
     try {
       const me = await getMe();
       if (!me) {
-        setLoading(false);
+        setMsg("Você precisa estar logado.");
+        setProfile(null);
+        setMyRoute(null);
         return;
       }
 
       const p = await ensureProfile(me.id);
       setProfile(p);
 
-      // minha rota atual (se tiver)
+      // minha rota atual (se tiver) — pega a mais recente
       const r = await supabase
         .from("routes")
         .select(
@@ -69,11 +80,11 @@ export default function DriverApp() {
         .eq("assigned_driver_id", me.id)
         .in("status", ["in_progress", "new"])
         .order("assigned_at", { ascending: false })
-        .limit(1);
+        .maybeSingle();
 
       if (r.error) throw r.error;
 
-      setMyRoute((r.data?.[0] as any) || null);
+      setMyRoute((r.data as any) || null);
     } catch (e: any) {
       setMsg(e?.message || String(e));
     } finally {
@@ -83,6 +94,7 @@ export default function DriverApp() {
 
   useEffect(() => {
     load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const canWork = useMemo(() => {
@@ -130,6 +142,7 @@ export default function DriverApp() {
           lat: Number(s.lat),
           lng: Number(s.lng),
           label: s.label,
+          delivery_id: s.delivery_id,
         }))
         .filter((s) => Number.isFinite(s.lat) && Number.isFinite(s.lng));
 
