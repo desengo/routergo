@@ -7,6 +7,10 @@ async function getUserId() {
   return data.session?.user?.id ?? null;
 }
 
+function cleanText(s: string) {
+  return (s || "").replace(/\s+/g, " ").trim();
+}
+
 function parseRouteNumber(name?: string | null) {
   if (!name) return null;
   const m = name.match(/rota\s*(\d+)/i);
@@ -21,29 +25,19 @@ export async function autoGenerateRoutesIfNeeded() {
 
   const settings = await getCompanySettings();
 
-  if (settings.demand_mode === "manual") {
-    return;
-  }
+  // ⚙ Manual = não gera automático
+  if (settings.demand_mode === "manual") return;
 
-  const radiusKm = settings.delivery_radius_km;
+  const radiusKm = Number(settings.delivery_radius_km || 1.2);
 
-  let target = 5;
-  let max = 7;
-
-  if (settings.demand_mode === "alta") {
-    target = 6;
-    max = 7;
-  }
-
-  if (settings.demand_mode === "media") {
-    target = 5;
-    max = 7;
-  }
-
-  if (settings.demand_mode === "baixa") {
-    target = 4;
-    max = 6;
-  }
+  // Ajuste simples por modo (sem mexer no seu algoritmo atual)
+  // - baixa: rotas menores
+  // - media: padrão
+  // - alta: rotas maiores (até 7)
+  let maxStops = 5;
+  if (settings.demand_mode === "baixa") maxStops = 4;
+  if (settings.demand_mode === "media") maxStops = 5;
+  if (settings.demand_mode === "alta") maxStops = 7;
 
   const [dRes, rRes] = await Promise.all([
     supabase
@@ -54,42 +48,38 @@ export async function autoGenerateRoutesIfNeeded() {
 
     supabase
       .from("routes")
-      .select("id,name,delivery_ids,status")
+      .select("id,name,delivery_ids")
       .eq("user_id", userId),
   ]);
 
-  if (dRes.error || rRes.error) return;
+  if (dRes.error) throw dRes.error;
+  if (rRes.error) throw rRes.error;
 
   const deliveries = dRes.data || [];
   const routes = rRes.data || [];
 
+  // ids já usados em rotas
   const used = new Set<string>();
-  routes.forEach((r: any) =>
-    (r.delivery_ids || []).forEach((id: string) => used.add(id))
-  );
+  routes.forEach((r: any) => (r.delivery_ids || []).forEach((id: string) => used.add(id)));
 
+  // entregas disponíveis (com coords e não usadas)
   const available = deliveries.filter(
     (d: any) => d.lat != null && d.lng != null && !used.has(d.id)
   );
 
+  // precisa de 2+ entregas disponíveis
   if (available.length < 2) return;
 
   const stops = available.map((d: any) => ({
     delivery_id: d.id,
     lat: d.lat,
     lng: d.lng,
-    label: `${d.client_name || "Cliente"} — ${d.order_id || ""} · ${
-      d.address_text || ""
-    }`,
+    label: cleanText(
+      `${d.client_name || "Cliente"} — ${d.order_id || ""} · ${d.address_text || ""}`
+    ),
   }));
 
-  const groups = generateRoutesMVP(stops, {
-    radiusKm,
-    minStops: 2,
-    targetStops: target,
-    maxStops: max,
-  });
-
+  const groups = generateRoutesMVP(stops, { maxStops, radiusKm });
   if (!groups.length) return;
 
   const maxExisting =
@@ -100,23 +90,24 @@ export async function autoGenerateRoutesIfNeeded() {
 
   let next = maxExisting + 1;
 
-  const inserts = groups.map((g) => {
-    const delivery_ids = g.stops.map((s) => s.delivery_id!).filter(Boolean);
+  const inserts = groups.map((g: any) => {
+    const delivery_ids = g.stops.map((s: any) => s.delivery_id!).filter(Boolean);
 
     return {
       user_id: userId,
       name: `Rota ${next++}`,
       status: "new",
       delivery_ids,
-      stops: g.stops.map((s, idx) => ({
+      stops: g.stops.map((s: any, idx: number) => ({
         delivery_id: s.delivery_id,
         lat: s.lat,
         lng: s.lng,
         label: `${idx + 1}. ${s.label || `Parada ${idx + 1}`}`,
       })),
-      total_est_km: Number(g.totalKm.toFixed(3)),
+      total_est_km: Number((g.totalKm ?? 0).toFixed(3)),
     };
   });
 
-  await supabase.from("routes").insert(inserts);
+  const ins = await supabase.from("routes").insert(inserts);
+  if (ins.error) throw ins.error;
 }
