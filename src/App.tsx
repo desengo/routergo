@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { Routes as RRoutes, Route, Navigate } from "react-router-dom";
+import { Routes, Route, Navigate } from "react-router-dom";
 import { supabase } from "./lib/supabase";
 
 import Login from "./pages/Login";
@@ -14,22 +14,26 @@ export default function App() {
   const [ready, setReady] = useState(false);
 
   useEffect(() => {
-    supabase.auth.getSession().then(async ({ data }) => {
-      const session = data.session;
-      setSession(session);
+    async function init() {
+      const { data } = await supabase.auth.getSession();
+      const s = data.session;
 
-      if (session?.user) {
+      setSession(s);
+
+      if (s?.user) {
         const { data: profile } = await supabase
           .from("profiles")
           .select("role")
-          .eq("id", session.user.id)
+          .eq("id", s.user.id)
           .single();
 
         setRole(profile?.role ?? null);
       }
 
       setReady(true);
-    });
+    }
+
+    init();
 
     const { data: sub } = supabase.auth.onAuthStateChange(async (_e, s) => {
       setSession(s);
@@ -42,6 +46,8 @@ export default function App() {
           .single();
 
         setRole(profile?.role ?? null);
+      } else {
+        setRole(null);
       }
     });
 
@@ -50,18 +56,29 @@ export default function App() {
 
   if (!ready) return null;
 
-  if (!session) return <Login />;
-
-  if (role === "driver") {
-    return <DriverApp />;
-  }
-
   return (
-    <RRoutes>
-      <Route path="/" element={<Dashboard />} />
-      <Route path="/drivers" element={<DriversAdmin />} />
-      <Route path="/route-mapbox" element={<RouteMapbox />} />
-      <Route path="*" element={<Navigate to="/" replace />} />
-    </RRoutes>
+    <Routes>
+      {!session && (
+        <>
+          <Route path="*" element={<Login />} />
+        </>
+      )}
+
+      {session && role === "driver" && (
+        <>
+          <Route path="/" element={<DriverApp />} />
+          <Route path="*" element={<Navigate to="/" />} />
+        </>
+      )}
+
+      {session && role !== "driver" && (
+        <>
+          <Route path="/" element={<Dashboard />} />
+          <Route path="/drivers" element={<DriversAdmin />} />
+          <Route path="/route-mapbox" element={<RouteMapbox />} />
+          <Route path="*" element={<Navigate to="/" />} />
+        </>
+      )}
+    </Routes>
   );
 }
