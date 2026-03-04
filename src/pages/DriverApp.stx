@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useState } from "react";
 import { supabase } from "../lib/supabase";
 
 type RouteRow = {
@@ -35,10 +35,12 @@ async function getLastQueuePosition() {
 }
 
 export default function DriverApp() {
+
   const [profile, setProfile] = useState<Profile | null>(null);
-  const [status, setStatus] = useState<"offline" | "available" | "busy">(
-    "offline"
-  );
+
+  const [status, setStatus] = useState<
+    "offline" | "available" | "busy"
+  >("offline");
 
   const [routeOffer, setRouteOffer] = useState<RouteRow | null>(null);
   const [offerTime, setOfferTime] = useState(20);
@@ -49,6 +51,7 @@ export default function DriverApp() {
   const [loading, setLoading] = useState(false);
 
   async function loadProfile() {
+
     const me = await getMe();
     if (!me) return;
 
@@ -68,11 +71,29 @@ export default function DriverApp() {
     loadProfile();
   }, []);
 
+  // =============================
+  // FICAR DISPONÍVEL
+  // =============================
+
   async function goAvailable() {
+
     setLoading(true);
+
     try {
+
       const me = await getMe();
       if (!me) return;
+
+      // contar quantos estão disponíveis
+      const { count } = await supabase
+        .from("profiles")
+        .select("*", { count: "exact", head: true })
+        .eq("driver_status", "available");
+
+      if ((count || 0) >= 7) {
+        alert("Limite de 7 entregadores disponíveis atingido.");
+        return;
+      }
 
       const last = await getLastQueuePosition();
 
@@ -80,29 +101,40 @@ export default function DriverApp() {
         .from("profiles")
         .update({
           driver_status: "available",
-          queue_position: last + 1,
+          queue_position: last + 1
         })
         .eq("id", me.id);
 
       if (error) throw error;
 
       setStatus("available");
+
       await loadProfile();
+
     } finally {
+
       setLoading(false);
+
     }
   }
 
+  // =============================
+  // FICAR OFFLINE
+  // =============================
+
   async function goOffline() {
+
     setLoading(true);
+
     try {
+
       const me = await getMe();
       if (!me) return;
 
       const { error } = await supabase
         .from("profiles")
         .update({
-          driver_status: "offline",
+          driver_status: "offline"
         })
         .eq("id", me.id);
 
@@ -111,12 +143,20 @@ export default function DriverApp() {
       setStatus("offline");
       setRouteOffer(null);
       setActiveRoute(null);
+
     } finally {
+
       setLoading(false);
+
     }
   }
 
+  // =============================
+  // VERIFICAR OFERTA DE ROTA
+  // =============================
+
   async function checkRouteOffer() {
+
     const me = await getMe();
     if (!me) return;
 
@@ -135,32 +175,50 @@ export default function DriverApp() {
     }
   }
 
-  // varredura enquanto disponível
+  // varredura
   useEffect(() => {
+
     if (status !== "available") return;
 
     const i = setInterval(checkRouteOffer, 5000);
+
     return () => clearInterval(i);
+
   }, [status]);
 
-  // contador de 20s
+  // =============================
+  // CONTADOR 20s
+  // =============================
+
   useEffect(() => {
+
     if (!routeOffer) return;
 
     const t = setInterval(() => {
+
       setOfferTime((s) => {
+
         if (s <= 1) {
           rejectRoute();
           return 20;
         }
+
         return s - 1;
+
       });
+
     }, 1000);
 
     return () => clearInterval(t);
+
   }, [routeOffer]);
 
+  // =============================
+  // ACEITAR ROTA
+  // =============================
+
   async function acceptRoute() {
+
     if (!routeOffer) return;
 
     const me = await getMe();
@@ -169,13 +227,15 @@ export default function DriverApp() {
     await supabase
       .from("routes")
       .update({
-        status: "accepted",
+        status: "accepted"
       })
       .eq("id", routeOffer.id);
 
     await supabase
       .from("profiles")
-      .update({ driver_status: "busy" })
+      .update({
+        driver_status: "busy"
+      })
       .eq("id", me.id);
 
     setActiveRoute(routeOffer);
@@ -183,20 +243,30 @@ export default function DriverApp() {
     setStatus("busy");
   }
 
+  // =============================
+  // RECUSAR ROTA
+  // =============================
+
   async function rejectRoute() {
+
     if (!routeOffer) return;
 
     await supabase
       .from("routes")
       .update({
-        assigned_driver_id: null,
+        assigned_driver_id: null
       })
       .eq("id", routeOffer.id);
 
     setRouteOffer(null);
   }
 
+  // =============================
+  // VALIDAR CÓDIGO
+  // =============================
+
   function confirmCode() {
+
     if (!activeRoute) return;
 
     const expected = (activeRoute.name || "").replace("Rota ", "");
@@ -208,13 +278,18 @@ export default function DriverApp() {
     }
   }
 
+  // =============================
+  // ABRIR MAPA
+  // =============================
+
   function openMap() {
+
     if (!activeRoute) return;
 
     const stops = (activeRoute.stops || []).map((s) => ({
       lat: Number(s.lat),
       lng: Number(s.lng),
-      label: s.label,
+      label: s.label
     }));
 
     sessionStorage.setItem("routergo_stops", JSON.stringify(stops));
@@ -222,7 +297,12 @@ export default function DriverApp() {
     window.location.href = "/route-mapbox";
   }
 
+  // =============================
+  // FINALIZAR ROTA
+  // =============================
+
   async function finishRoute() {
+
     if (!activeRoute) return;
 
     const me = await getMe();
@@ -234,7 +314,7 @@ export default function DriverApp() {
       .from("routes")
       .update({
         status: "done",
-        finished_at: new Date().toISOString(),
+        finished_at: new Date().toISOString()
       })
       .eq("id", activeRoute.id);
 
@@ -242,7 +322,7 @@ export default function DriverApp() {
       .from("profiles")
       .update({
         driver_status: "available",
-        queue_position: last + 1,
+        queue_position: last + 1
       })
       .eq("id", me.id);
 
@@ -256,7 +336,9 @@ export default function DriverApp() {
 
   return (
     <div className="wrap">
+
       <div className="topbar">
+
         <h2>Entregador</h2>
 
         <button
@@ -265,9 +347,11 @@ export default function DriverApp() {
         >
           Sair
         </button>
+
       </div>
 
       <div className="card">
+
         <div className="row space">
           <b>Nome</b>
           <span>{profile.display_name}</span>
@@ -282,47 +366,79 @@ export default function DriverApp() {
           <b>Status</b>
           <span>{status}</span>
         </div>
+
       </div>
 
       {status === "offline" && (
+
         <div className="card" style={{ marginTop: 12 }}>
-          <button className="primary" onClick={goAvailable} disabled={loading}>
+
+          <button
+            className="primary"
+            onClick={goAvailable}
+            disabled={loading}
+          >
             Ficar disponível
           </button>
+
         </div>
+
       )}
 
       {status === "available" && (
+
         <div className="card" style={{ marginTop: 12 }}>
-          <button className="ghost" onClick={goOffline} disabled={loading}>
+
+          <button
+            className="ghost"
+            onClick={goOffline}
+            disabled={loading}
+          >
             Ficar offline
           </button>
+
         </div>
+
       )}
 
       {routeOffer && (
+
         <div className="card" style={{ marginTop: 12 }}>
+
           <h3>Nova rota disponível</h3>
 
           <p>{routeOffer.name}</p>
+
           <p>{routeOffer.total_est_km ?? "?"} km</p>
 
           <p>Tempo para aceitar: {offerTime}s</p>
 
           <div className="row">
-            <button className="primary" onClick={acceptRoute}>
+
+            <button
+              className="primary"
+              onClick={acceptRoute}
+            >
               Aceitar
             </button>
 
-            <button className="ghost" onClick={rejectRoute}>
+            <button
+              className="ghost"
+              onClick={rejectRoute}
+            >
               Recusar
             </button>
+
           </div>
+
         </div>
+
       )}
 
       {activeRoute && (
+
         <div className="card" style={{ marginTop: 12 }}>
+
           <h3>{activeRoute.name}</h3>
 
           <label>Código da rota</label>
@@ -332,15 +448,24 @@ export default function DriverApp() {
             onChange={(e) => setRouteCode(e.target.value)}
           />
 
-          <button className="primary" onClick={confirmCode}>
+          <button
+            className="primary"
+            onClick={confirmCode}
+          >
             Iniciar rota
           </button>
 
-          <button className="ghost" onClick={finishRoute}>
+          <button
+            className="ghost"
+            onClick={finishRoute}
+          >
             Concluir rota
           </button>
+
         </div>
+
       )}
+
     </div>
   );
 }
