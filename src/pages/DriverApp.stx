@@ -1,263 +1,124 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useState } from "react";
 import { supabase } from "../lib/supabase";
-
-type Stop = {
-  lat: number;
-  lng: number;
-  label?: string;
-  delivery_id?: string;
-};
-
-type RouteRow = {
-  id: string;
-  user_id: string;
-  name: string | null;
-  status: "new" | "in_progress" | "done";
-  stops: Stop[] | null;
-  total_est_km: number | null;
-
-  assigned_driver_id: string | null;
-  assigned_at: string | null;
-
-  started_at: string | null;
-  finished_at: string | null;
-
-  created_at?: string;
-};
-
-async function getMe() {
-  const { data, error } = await supabase.auth.getUser();
-  if (error) throw error;
-  return data.user ?? null;
-}
 
 export default function DriverApp() {
   const [profile, setProfile] = useState<any>(null);
-  const [myRoute, setMyRoute] = useState<RouteRow | null>(null);
+  const [status, setStatus] = useState<"offline" | "available" | "busy">("offline");
   const [loading, setLoading] = useState(false);
-  const [msg, setMsg] = useState<string | null>(null);
 
-  async function ensureProfile(meId: string) {
-    // tenta ler
-    const p = await supabase.from("profiles").select("*").eq("id", meId).maybeSingle();
-    if (p.error) throw p.error;
+  async function loadProfile() {
+    const { data } = await supabase.auth.getUser();
+    const user = data.user;
 
-    // se não existir, cria profile básico
-    if (!p.data) {
-      const ins = await supabase.from("profiles").insert({ id: meId, role: "driver" });
-      if (ins.error) throw ins.error;
+    if (!user) return;
 
-      const p2 = await supabase.from("profiles").select("*").eq("id", meId).maybeSingle();
-      if (p2.error) throw p2.error;
-      return p2.data;
-    }
+    const { data: profile } = await supabase
+      .from("profiles")
+      .select("*")
+      .eq("id", user.id)
+      .single();
 
-    return p.data;
-  }
-
-  async function load() {
-    setLoading(true);
-    setMsg(null);
-
-    try {
-      const me = await getMe();
-      if (!me) {
-        setMsg("Você precisa estar logado.");
-        setProfile(null);
-        setMyRoute(null);
-        return;
-      }
-
-      const p = await ensureProfile(me.id);
-      setProfile(p);
-
-      // minha rota atual (se tiver) — pega a mais recente
-      const r = await supabase
-        .from("routes")
-        .select(
-          "id,user_id,name,status,stops,total_est_km,assigned_driver_id,assigned_at,started_at,finished_at,created_at"
-        )
-        .eq("assigned_driver_id", me.id)
-        .in("status", ["in_progress", "new"])
-        .order("assigned_at", { ascending: false })
-        .maybeSingle();
-
-      if (r.error) throw r.error;
-
-      setMyRoute((r.data as any) || null);
-    } catch (e: any) {
-      setMsg(e?.message || String(e));
-    } finally {
-      setLoading(false);
-    }
+    setProfile(profile);
   }
 
   useEffect(() => {
-    load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    loadProfile();
   }, []);
 
-  const canWork = useMemo(() => {
-    const role = profile?.role || "driver";
-    const owner = profile?.company_owner_id || null;
-    return role === "driver" && !!owner;
-  }, [profile]);
-
-  async function claimNext() {
+  async function goAvailable() {
     setLoading(true);
-    setMsg(null);
 
-    try {
-      const { data, error } = await supabase.rpc("claim_next_route");
-      if (error) throw error;
+    const { data } = await supabase.auth.getUser();
+    const user = data.user;
 
-      if (!data) {
-        setMsg("Nenhuma rota disponível agora.");
-        await load();
-        return;
-      }
+    if (!user) return;
 
-      setMsg("Rota atribuída ✅");
-      await load();
-    } catch (e: any) {
-      setMsg(e?.message || String(e));
-    } finally {
-      setLoading(false);
-    }
+    await supabase
+      .from("profiles")
+      .update({ driver_status: "available" })
+      .eq("id", user.id);
+
+    setStatus("available");
+    setLoading(false);
   }
 
-  async function startRoute() {
-    if (!myRoute) return;
+  async function goOffline() {
     setLoading(true);
-    setMsg(null);
 
-    try {
-      const { error } = await supabase.rpc("start_my_route", { p_route_id: myRoute.id });
-      if (error) throw error;
+    const { data } = await supabase.auth.getUser();
+    const user = data.user;
 
-      // abre o mapa usando o seu RouteMapbox atual (sessionStorage)
-      const stops = Array.isArray(myRoute.stops) ? myRoute.stops : [];
-      const cleanStops = stops
-        .map((s) => ({
-          lat: Number(s.lat),
-          lng: Number(s.lng),
-          label: s.label,
-          delivery_id: s.delivery_id,
-        }))
-        .filter((s) => Number.isFinite(s.lat) && Number.isFinite(s.lng));
+    if (!user) return;
 
-      if (cleanStops.length < 2) {
-        setMsg("Essa rota não tem paradas suficientes com coordenadas.");
-        return;
-      }
+    await supabase
+      .from("profiles")
+      .update({ driver_status: "offline" })
+      .eq("id", user.id);
 
-      sessionStorage.setItem("routergo_stops", JSON.stringify(cleanStops));
-      window.location.href = "/route-mapbox";
-    } catch (e: any) {
-      setMsg(e?.message || String(e));
-    } finally {
-      setLoading(false);
-    }
+    setStatus("offline");
+    setLoading(false);
   }
 
-  async function finishRoute() {
-    if (!myRoute) return;
-    setLoading(true);
-    setMsg(null);
-
-    try {
-      const { error } = await supabase.rpc("finish_my_route", { p_route_id: myRoute.id });
-      if (error) throw error;
-
-      setMsg("Rota concluída ✅");
-      await load();
-    } catch (e: any) {
-      setMsg(e?.message || String(e));
-    } finally {
-      setLoading(false);
-    }
+  if (!profile) {
+    return <div className="wrap">Carregando...</div>;
   }
 
   return (
     <div className="wrap">
       <div className="topbar">
-        <h2>Entregador</h2>
-        <button className="ghost" onClick={() => supabase.auth.signOut()}>
+        <h2>App do Entregador</h2>
+
+        <button
+          className="ghost"
+          onClick={() => supabase.auth.signOut()}
+        >
           Sair
         </button>
       </div>
 
       <div className="card">
+
+        <div className="row space">
+          <b>Entregador</b>
+          <span>{profile.name}</span>
+        </div>
+
+        <div className="row space">
+          <b>Placa</b>
+          <span>{profile.vehicle_plate}</span>
+        </div>
+
         <div className="row space">
           <b>Status</b>
-          <button className="ghost" onClick={load}>
-            {loading ? "..." : "Atualizar"}
-          </button>
+          <span>{status}</span>
         </div>
 
-        <div className="muted" style={{ marginTop: 8 }}>
-          Perfil: <b>{profile?.role || "driver"}</b>
-          <br />
-          Vinculado ao admin (company_owner_id):{" "}
-          <b>{profile?.company_owner_id ? "ok" : "NÃO"}</b>
-        </div>
-
-        {!canWork && (
-          <div className="muted" style={{ marginTop: 10 }}>
-            Para funcionar agora: no Supabase, na tabela <b>profiles</b>, coloque seu{" "}
-            <b>company_owner_id</b> = UUID do admin (dono das rotas).
-          </div>
-        )}
-
-        {msg && (
-          <div style={{ marginTop: 10 }}>
-            <b>{msg}</b>
-          </div>
-        )}
       </div>
 
       <div className="card" style={{ marginTop: 12 }}>
-        <div className="row space">
-          <b>Minha rota</b>
 
-          {!myRoute && (
-            <button className="primary" onClick={claimNext} disabled={loading || !canWork}>
-              Pegar próxima rota
-            </button>
-          )}
-        </div>
-
-        {myRoute ? (
-          <div style={{ marginTop: 10 }}>
-            <div className="row space">
-              <div>
-                <div style={{ fontWeight: 900 }}>{myRoute.name || "Rota"}</div>
-                <div className="muted">Status: {myRoute.status}</div>
-              </div>
-              <div className="muted">~{myRoute.total_est_km ?? "?"} km</div>
-            </div>
-
-            <div style={{ marginTop: 10 }}>
-              <b>Paradas:</b>{" "}
-              {Array.isArray(myRoute.stops) ? myRoute.stops.length : 0}
-            </div>
-
-            <div className="row" style={{ gap: 10, marginTop: 12, flexWrap: "wrap" }}>
-              <button className="primary" onClick={startRoute} disabled={loading}>
-                Iniciar rota (Mapa)
-              </button>
-
-              <button className="ghost" onClick={finishRoute} disabled={loading}>
-                Concluir rota
-              </button>
-            </div>
-          </div>
-        ) : (
-          <p className="muted" style={{ marginTop: 10 }}>
-            Você está livre. Clique em <b>Pegar próxima rota</b>.
-          </p>
+        {status === "offline" && (
+          <button
+            className="primary"
+            onClick={goAvailable}
+            disabled={loading}
+          >
+            Ficar disponível
+          </button>
         )}
+
+        {status === "available" && (
+          <button
+            className="ghost"
+            onClick={goOffline}
+            disabled={loading}
+          >
+            Ficar offline
+          </button>
+        )}
+
       </div>
+
     </div>
   );
 }
