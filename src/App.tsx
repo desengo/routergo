@@ -7,75 +7,99 @@ import Dashboard from "./pages/Dashboard";
 import RouteMapbox from "./pages/RouteMapbox";
 import DriverApp from "./pages/DriverApp";
 
+type Role = "admin" | "driver";
+
+type Profile = {
+  id: string;
+  role: Role | null;
+};
+
+async function ensureProfileAndGetRole(userId: string): Promise<Role> {
+  // tenta ler o profile
+  const p = await supabase.from("profiles").select("id,role").eq("id", userId).maybeSingle();
+
+  // se deu erro real (exceto "não achou"), dispara
+  if (p.error) throw p.error;
+
+  // se não existe, cria como driver (padrão)
+  if (!p.data) {
+    const ins = await supabase.from("profiles").insert({ id: userId, role: "driver" });
+    if (ins.error) throw ins.error;
+    return "driver";
+  }
+
+  // se existe mas role vazio/nulo, assume driver por segurança
+  const role = (p.data as Profile).role;
+  return role === "admin" ? "admin" : "driver";
+}
+
 export default function App() {
   const [session, setSession] = useState<any>(null);
   const [ready, setReady] = useState(false);
-  const [bootError, setBootError] = useState<string | null>(null);
+
+  // role do usuário logado
+  const [role, setRole] = useState<Role | null>(null);
+  const [roleReady, setRoleReady] = useState(false);
 
   useEffect(() => {
-    let mounted = true;
-
-    (async () => {
-      try {
-        const { data, error } = await supabase.auth.getSession();
-        if (error) throw error;
-
-        if (!mounted) return;
-        setSession(data.session);
-      } catch (e: any) {
-        if (!mounted) return;
-        setBootError(e?.message || String(e));
-        setSession(null);
-      } finally {
-        if (!mounted) return;
-        setReady(true);
-      }
-    })();
-
-    const { data: sub } = supabase.auth.onAuthStateChange((_e, s) => {
-      setSession(s);
+    supabase.auth.getSession().then(({ data }) => {
+      setSession(data.session);
+      setReady(true);
     });
 
-    return () => {
-      mounted = false;
-      sub.subscription.unsubscribe();
-    };
+    const { data: sub } = supabase.auth.onAuthStateChange((_e, s) => setSession(s));
+    return () => sub.subscription.unsubscribe();
   }, []);
 
-  // ✅ Nunca mais retorna null (pra não ficar “tela vazia”)
-  if (!ready) {
-    return (
-      <div className="wrap">
-        <div className="card" style={{ marginTop: 60 }}>
-          <b>Carregando…</b>
-          <div className="muted" style={{ marginTop: 8 }}>
-            Inicializando sessão…
-          </div>
-        </div>
-      </div>
-    );
-  }
+  // sempre que logar/deslogar, resolve role
+  useEffect(() => {
+    let cancelled = false;
 
-  // ✅ Se deu erro no boot, mostra o erro (em vez de ficar vazio)
-  if (bootError) {
-    return (
-      <div className="wrap">
-        <div className="card" style={{ marginTop: 60 }}>
-          <b>Erro ao iniciar</b>
-          <div className="muted" style={{ marginTop: 8 }}>
-            {bootError}
-          </div>
+    async function loadRole() {
+      setRoleReady(false);
+      setRole(null);
 
-          <div className="muted" style={{ marginTop: 8 }}>
-            Dica: confira VITE_SUPABASE_URL e VITE_SUPABASE_ANON_KEY no Netlify.
-          </div>
-        </div>
-      </div>
-    );
-  }
+      try {
+        const userId = session?.user?.id;
+        if (!userId) {
+          setRoleReady(true);
+          return;
+        }
 
+        const r = await ensureProfileAndGetRole(userId);
+        if (!cancelled) setRole(r);
+      } catch {
+        // fallback seguro: se falhar, trata como driver
+        if (!cancelled) setRole("driver");
+      } finally {
+        if (!cancelled) setRoleReady(true);
+      }
+    }
+
+    loadRole();
+    return () => {
+      cancelled = true;
+    };
+  }, [session?.user?.id]);
+
+  if (!ready) return null;
   if (!session) return <Login />;
 
+  // espera resolver role antes de renderizar rotas
+  if (!roleReady || !role) return null;
+
+  // ✅ DRIVER: só acessa /driver e /route-mapbox
+  if (role === "driver") {
+    return (
+      <RRoutes>
+        <Route path="/driver" element={<DriverApp />} />
+        <Route path="/route-mapbox" element={<RouteMapbox />} />
+        <Route path="*" element={<Navigate to="/driver" replace />} />
+      </RRoutes>
+    );
+  }
+
+  // ✅ ADMIN: acessa o Dashboard + mapa
   return (
     <RRoutes>
       <Route path="/" element={<Dashboard />} />
