@@ -6,6 +6,7 @@ import Login from "./pages/Login";
 import Dashboard from "./pages/Dashboard";
 import RouteMapbox from "./pages/RouteMapbox";
 import DriverApp from "./pages/DriverApp";
+import DriversAdmin from "./pages/DriversAdmin";
 
 export default function App() {
   const [session, setSession] = useState<any>(null);
@@ -51,15 +52,14 @@ export default function App() {
 
   if (!session) return <Login />;
 
-  // Driver abre direto o app do entregador
   if (role === "driver") {
     return <DriverApp />;
   }
 
-  // Admin usa rotas normais
   return (
     <RRoutes>
       <Route path="/" element={<Dashboard />} />
+      <Route path="/drivers" element={<DriversAdmin />} />
       <Route path="/route-mapbox" element={<RouteMapbox />} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </RRoutes>
