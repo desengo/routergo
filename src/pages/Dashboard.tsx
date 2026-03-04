@@ -8,7 +8,7 @@ import {
   DemandMode,
 } from "../lib/companySettings";
 
-type View = "home" | "deliveries" | "routes";
+type View = "home" | "deliveries" | "routes" | "drivers";
 
 type RouteRow = {
   id: string;
@@ -17,7 +17,13 @@ type RouteRow = {
 
 type ProfileRow = {
   id: string;
-  driver_status?: string | null;
+  role?: string | null; // "admin" | "driver" (se você usar)
+  display_name?: string | null;
+  vehicle_plate?: string | null;
+  driver_status?: string | null; // "offline" | "available" | "busy"
+  queue_position?: number | null;
+  company_owner_id?: string | null; // admin/dono
+  created_at?: string;
 };
 
 async function getUserId() {
@@ -31,6 +37,10 @@ function intervalLabel(mode: DemandMode) {
   if (mode === "media") return "30s";
   if (mode === "baixa") return "60s";
   return "—";
+}
+
+function normalizePlate(v: string) {
+  return (v || "").toUpperCase().replace(/\s+/g, "").trim();
 }
 
 export default function Dashboard() {
@@ -49,6 +59,11 @@ export default function Dashboard() {
   const [routesInProgressCount, setRoutesInProgressCount] = useState(0);
   const [routesDoneCount, setRoutesDoneCount] = useState(0);
   const [driversOnlineCount, setDriversOnlineCount] = useState(0);
+
+  // drivers admin view
+  const [loadingDrivers, setLoadingDrivers] = useState(false);
+  const [drivers, setDrivers] = useState<ProfileRow[]>([]);
+  const [driversMsg, setDriversMsg] = useState<string | null>(null);
 
   const scanLabel = useMemo(() => intervalLabel(demandMode), [demandMode]);
 
@@ -96,11 +111,7 @@ export default function Dashboard() {
       if (d.error) throw d.error;
 
       // Rotas do admin (pega status pra contar)
-      const r = await supabase
-        .from("routes")
-        .select("id,status")
-        .eq("user_id", userId);
-
+      const r = await supabase.from("routes").select("id,status").eq("user_id", userId);
       if (r.error) throw r.error;
 
       const routes = (r.data || []) as RouteRow[];
@@ -108,11 +119,12 @@ export default function Dashboard() {
       const inProgCount = routes.filter((x) => x.status === "in_progress").length;
       const doneCount = routes.filter((x) => x.status === "done").length;
 
-      // Entregadores online (profiles)
-      // Como você definiu limite de online e fila, aqui contamos "available" e "busy" como online
+      // Entregadores vinculados a ESTE admin
+      // online = available/busy
       const p = await supabase
         .from("profiles")
-        .select("id,driver_status");
+        .select("id,driver_status,company_owner_id")
+        .eq("company_owner_id", userId);
 
       if (p.error) throw p.error;
 
@@ -136,9 +148,96 @@ export default function Dashboard() {
     }
   }
 
+  async function loadDrivers() {
+    setLoadingDrivers(true);
+    setDriversMsg(null);
+
+    try {
+      const userId = await getUserId();
+      if (!userId) return;
+
+      // Mostra:
+      // 1) drivers já vinculados ao admin
+      // 2) drivers ainda sem vínculo (company_owner_id null) — pra você conseguir “adotar”
+      // OBS: se você tiver muitos usuários no futuro, a gente filtra melhor.
+      const { data, error } = await supabase
+        .from("profiles")
+        .select("id,role,display_name,vehicle_plate,driver_status,queue_position,company_owner_id,created_at")
+        .or(`company_owner_id.eq.${userId},company_owner_id.is.null`)
+        .order("created_at", { ascending: false });
+
+      if (error) throw error;
+
+      // Se você usa role, dá pra priorizar drivers; senão, mostra todos que aparecem no filtro.
+      setDrivers((data || []) as ProfileRow[]);
+    } catch (e: any) {
+      console.error(e);
+      setDriversMsg(e?.message || String(e));
+    } finally {
+      setLoadingDrivers(false);
+    }
+  }
+
+  async function linkDriverToMe(driverId: string) {
+    const userId = await getUserId();
+    if (!userId) return;
+
+    const { error } = await supabase
+      .from("profiles")
+      .update({ company_owner_id: userId })
+      .eq("id", driverId);
+
+    if (error) {
+      alert("Erro ao vincular: " + error.message);
+      return;
+    }
+    await loadDrivers();
+    await loadStats();
+  }
+
+  async function unlinkDriver(driverId: string) {
+    const userId = await getUserId();
+    if (!userId) return;
+
+    const { error } = await supabase
+      .from("profiles")
+      .update({ company_owner_id: null, driver_status: "offline", queue_position: null })
+      .eq("id", driverId)
+      .eq("company_owner_id", userId);
+
+    if (error) {
+      alert("Erro ao desvincular: " + error.message);
+      return;
+    }
+    await loadDrivers();
+    await loadStats();
+  }
+
+  async function saveDriverEdits(driverId: string, patch: Partial<ProfileRow>) {
+    const userId = await getUserId();
+    if (!userId) return;
+
+    const { error } = await supabase
+      .from("profiles")
+      .update(patch)
+      .eq("id", driverId)
+      .eq("company_owner_id", userId);
+
+    if (error) {
+      alert("Erro ao salvar: " + error.message);
+      return;
+    }
+    await loadDrivers();
+  }
+
   useEffect(() => {
     // carrega stats ao abrir e sempre que voltar pro home
     if (view === "home") loadStats();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [view]);
+
+  useEffect(() => {
+    if (view === "drivers") loadDrivers();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [view]);
 
@@ -207,6 +306,85 @@ export default function Dashboard() {
         </div>
 
         <Routes />
+      </div>
+    );
+  }
+
+  if (view === "drivers") {
+    const meId = (async () => await getUserId())(); // só pra evitar warning mental; não usamos no render.
+    void meId;
+
+    return (
+      <div className="wrap">
+        <div className="topbar">
+          <div className="brand">
+            <img
+              src="https://i.ibb.co/DPYsRh9r/file-00000000a9c871f589252b63d66b7839-removebg-preview.png"
+              alt="RouterGo"
+              className="brandLogo"
+            />
+            <h2 className="brandTitle">RouterGo</h2>
+          </div>
+
+          <div className="row" style={{ gap: 10 }}>
+            <button className="ghost" onClick={() => setView("home")}>
+              ← Voltar ao Painel
+            </button>
+
+            <button className="ghost" onClick={() => supabase.auth.signOut()}>
+              Sair
+            </button>
+          </div>
+        </div>
+
+        <div className="card">
+          <div className="row space">
+            <h3 style={{ margin: 0 }}>Entregadores</h3>
+            <button className="ghost" onClick={loadDrivers} disabled={loadingDrivers}>
+              {loadingDrivers ? "..." : "Atualizar"}
+            </button>
+          </div>
+
+          <p className="muted" style={{ marginTop: 10 }}>
+            Aqui você <b>vincula</b> entregadores à sua empresa e edita <b>Nome</b> e <b>Placa</b>.
+            <br />
+            O app do entregador continua igual — isso é só o painel admin.
+          </p>
+
+          <div className="row" style={{ gap: 10, marginTop: 10, flexWrap: "wrap" }}>
+            <button className="primary" onClick={goDriver}>
+              Abrir app do Entregador (teste)
+            </button>
+          </div>
+
+          {driversMsg && (
+            <div style={{ marginTop: 12 }}>
+              <b>{driversMsg}</b>
+            </div>
+          )}
+        </div>
+
+        <div className="list" style={{ marginTop: 12 }}>
+          {drivers.map((d) => (
+            <DriverCard
+              key={d.id}
+              d={d}
+              onLink={linkDriverToMe}
+              onUnlink={unlinkDriver}
+              onSave={saveDriverEdits}
+            />
+          ))}
+
+          {drivers.length === 0 && (
+            <div className="card">
+              <p className="muted" style={{ margin: 0 }}>
+                Nenhum entregador encontrado ainda.
+                <br />
+                Dica: crie uma conta pelo cadastro normal e depois vincule aqui.
+              </p>
+            </div>
+          )}
+        </div>
       </div>
     );
   }
@@ -336,16 +514,20 @@ export default function Dashboard() {
         <div className="item col">
           <div className="row space">
             <b>👨‍✈️ Entregadores</b>
-            <span className="muted">App do entregador</span>
+            <span className="muted">Cadastro / vínculo / placa</span>
           </div>
 
           <p className="muted" style={{ marginTop: 8 }}>
-            Acesso direto para testes/operacional. (Não altera a tela do entregador.)
+            Vincule entregadores à sua empresa e edite nome/placa.
           </p>
 
           <div className="row" style={{ gap: 10, marginTop: 10, flexWrap: "wrap" }}>
-            <button className="primary" onClick={goDriver}>
-              Abrir tela do Entregador
+            <button className="primary" onClick={() => setView("drivers")}>
+              Gerenciar Entregadores
+            </button>
+
+            <button className="ghost" onClick={goDriver}>
+              Abrir app do Entregador
             </button>
           </div>
         </div>
@@ -370,6 +552,97 @@ export default function Dashboard() {
             * Pode abrir vazio se não houver paradas salvas.
           </div>
         </div>
+      </div>
+    </div>
+  );
+}
+
+/** Card do entregador (admin) */
+function DriverCard({
+  d,
+  onLink,
+  onUnlink,
+  onSave,
+}: {
+  d: ProfileRow;
+  onLink: (id: string) => Promise<void>;
+  onUnlink: (id: string) => Promise<void>;
+  onSave: (id: string, patch: Partial<ProfileRow>) => Promise<void>;
+}) {
+  const [name, setName] = useState(d.display_name || "");
+  const [plate, setPlate] = useState(d.vehicle_plate || "");
+  const [saving, setSaving] = useState(false);
+
+  const isLinked = !!d.company_owner_id;
+  const status = (d.driver_status || "offline").toLowerCase();
+
+  async function save() {
+    setSaving(true);
+    try {
+      await onSave(d.id, {
+        display_name: name.trim() || null,
+        vehicle_plate: normalizePlate(plate) || null,
+      });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function setOffline() {
+    setSaving(true);
+    try {
+      await onSave(d.id, {
+        driver_status: "offline",
+        queue_position: null,
+      });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="item col">
+      <div className="row space">
+        <b>👤 {d.display_name || "Entregador"}</b>
+        <span className="muted">
+          {isLinked ? "Vinculado" : "Sem vínculo"} · Status: {status}
+        </span>
+      </div>
+
+      <div style={{ marginTop: 10 }}>
+        <label>Nome do entregador</label>
+        <input value={name} onChange={(e) => setName(e.target.value)} />
+
+        <label>Placa do veículo</label>
+        <input value={plate} onChange={(e) => setPlate(e.target.value)} placeholder="ABC1D23" />
+      </div>
+
+      <div className="row" style={{ gap: 10, marginTop: 12, flexWrap: "wrap" }}>
+        {isLinked ? (
+          <>
+            <button className="primary" onClick={save} disabled={saving}>
+              {saving ? "..." : "Salvar"}
+            </button>
+
+            <button className="ghost" onClick={setOffline} disabled={saving}>
+              Colocar offline
+            </button>
+
+            <button className="ghost" onClick={() => onUnlink(d.id)} disabled={saving}>
+              Desvincular
+            </button>
+          </>
+        ) : (
+          <>
+            <button className="primary" onClick={() => onLink(d.id)} disabled={saving}>
+              Vincular à minha empresa
+            </button>
+          </>
+        )}
+      </div>
+
+      <div className="muted" style={{ marginTop: 10, fontSize: 12 }}>
+        ID: {d.id}
       </div>
     </div>
   );
