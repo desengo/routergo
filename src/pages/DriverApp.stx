@@ -2,11 +2,20 @@ import React, { useEffect, useState } from "react";
 import { supabase } from "../lib/supabase";
 
 export default function DriverApp() {
+
   const [profile, setProfile] = useState<any>(null);
   const [status, setStatus] = useState<"offline" | "available" | "busy">("offline");
+
+  const [routeOffer, setRouteOffer] = useState<any>(null);
+  const [offerTime, setOfferTime] = useState(20);
+
+  const [activeRoute, setActiveRoute] = useState<any>(null);
+  const [routeCode, setRouteCode] = useState("");
+
   const [loading, setLoading] = useState(false);
 
   async function loadProfile() {
+
     const { data } = await supabase.auth.getUser();
     const user = data.user;
 
@@ -26,7 +35,6 @@ export default function DriverApp() {
   }, []);
 
   async function goAvailable() {
-    setLoading(true);
 
     const { data } = await supabase.auth.getUser();
     const user = data.user;
@@ -39,11 +47,9 @@ export default function DriverApp() {
       .eq("id", user.id);
 
     setStatus("available");
-    setLoading(false);
   }
 
   async function goOffline() {
-    setLoading(true);
 
     const { data } = await supabase.auth.getUser();
     const user = data.user;
@@ -56,17 +62,144 @@ export default function DriverApp() {
       .eq("id", user.id);
 
     setStatus("offline");
-    setLoading(false);
+  }
+
+  async function checkRouteOffer() {
+
+    const { data } = await supabase.auth.getUser();
+    const user = data.user;
+
+    if (!user) return;
+
+    const { data: route } = await supabase
+      .from("routes")
+      .select("*")
+      .eq("assigned_driver_id", user.id)
+      .eq("status", "new")
+      .maybeSingle();
+
+    if (route) {
+      setRouteOffer(route);
+      setOfferTime(20);
+    }
+  }
+
+  useEffect(() => {
+
+    if (status !== "available") return;
+
+    const interval = setInterval(() => {
+      checkRouteOffer();
+    }, 5000);
+
+    return () => clearInterval(interval);
+
+  }, [status]);
+
+  useEffect(() => {
+
+    if (!routeOffer) return;
+
+    const timer = setInterval(() => {
+
+      setOfferTime((t) => {
+
+        if (t <= 1) {
+
+          rejectRoute();
+          return 20;
+
+        }
+
+        return t - 1;
+
+      });
+
+    }, 1000);
+
+    return () => clearInterval(timer);
+
+  }, [routeOffer]);
+
+  async function acceptRoute() {
+
+    await supabase
+      .from("routes")
+      .update({ status: "accepted" })
+      .eq("id", routeOffer.id);
+
+    setActiveRoute(routeOffer);
+    setRouteOffer(null);
+  }
+
+  async function rejectRoute() {
+
+    await supabase
+      .from("routes")
+      .update({ assigned_driver_id: null })
+      .eq("id", routeOffer.id);
+
+    setRouteOffer(null);
+  }
+
+  function confirmCode() {
+
+    if (routeCode === activeRoute.name.replace("Rota ", "")) {
+
+      setStatus("busy");
+
+    } else {
+
+      alert("Código incorreto");
+
+    }
+
+  }
+
+  function openMap() {
+
+    const stops = activeRoute.stops || [];
+
+    const cleanStops = stops.map((s:any)=>({
+
+      lat: Number(s.lat),
+      lng: Number(s.lng),
+      label: s.label
+
+    }));
+
+    sessionStorage.setItem("routergo_stops", JSON.stringify(cleanStops));
+
+    window.location.href = "/route-mapbox";
+  }
+
+  async function finishRoute() {
+
+    await supabase
+      .from("routes")
+      .update({
+        status: "done",
+        finished_at: new Date().toISOString()
+      })
+      .eq("id", activeRoute.id);
+
+    setActiveRoute(null);
+    setStatus("available");
   }
 
   if (!profile) {
+
     return <div className="wrap">Carregando...</div>;
+
   }
 
   return (
+
     <div className="wrap">
+
       <div className="topbar">
-        <h2>App do Entregador</h2>
+
+        <h2>Entregador</h2>
 
         <button
           className="ghost"
@@ -74,12 +207,13 @@ export default function DriverApp() {
         >
           Sair
         </button>
+
       </div>
 
       <div className="card">
 
         <div className="row space">
-          <b>Entregador</b>
+          <b>Nome</b>
           <span>{profile.name}</span>
         </div>
 
@@ -95,30 +229,120 @@ export default function DriverApp() {
 
       </div>
 
-      <div className="card" style={{ marginTop: 12 }}>
+      {!activeRoute && status === "offline" && (
 
-        {status === "offline" && (
+        <div className="card" style={{marginTop:12}}>
+
           <button
             className="primary"
             onClick={goAvailable}
-            disabled={loading}
           >
             Ficar disponível
           </button>
-        )}
 
-        {status === "available" && (
+        </div>
+
+      )}
+
+      {status === "available" && !activeRoute && (
+
+        <div className="card" style={{marginTop:12}}>
+
           <button
             className="ghost"
             onClick={goOffline}
-            disabled={loading}
           >
             Ficar offline
           </button>
-        )}
 
-      </div>
+        </div>
+
+      )}
+
+      {routeOffer && (
+
+        <div className="card" style={{marginTop:12}}>
+
+          <h3>Nova rota disponível</h3>
+
+          <p>{routeOffer.name}</p>
+
+          <p>{routeOffer.total_est_km} km</p>
+
+          <p>Tempo: {offerTime}s</p>
+
+          <div className="row">
+
+            <button
+              className="primary"
+              onClick={acceptRoute}
+            >
+              Aceitar
+            </button>
+
+            <button
+              className="ghost"
+              onClick={rejectRoute}
+            >
+              Recusar
+            </button>
+
+          </div>
+
+        </div>
+
+      )}
+
+      {activeRoute && status !== "busy" && (
+
+        <div className="card" style={{marginTop:12}}>
+
+          <h3>{activeRoute.name}</h3>
+
+          <p>{activeRoute.total_est_km} km</p>
+
+          <label>Código da rota</label>
+
+          <input
+            value={routeCode}
+            onChange={(e)=>setRouteCode(e.target.value)}
+          />
+
+          <button
+            className="primary"
+            onClick={confirmCode}
+          >
+            Confirmar
+          </button>
+
+        </div>
+
+      )}
+
+      {activeRoute && status === "busy" && (
+
+        <div className="card" style={{marginTop:12}}>
+
+          <button
+            className="primary"
+            onClick={openMap}
+          >
+            Iniciar rota
+          </button>
+
+          <button
+            className="ghost"
+            onClick={finishRoute}
+          >
+            Concluir rota
+          </button>
+
+        </div>
+
+      )}
 
     </div>
+
   );
+
 }
