@@ -1,19 +1,8 @@
+# netlify.toml
 [build]
   command = "npm run build"
   publish = "dist"
 
-# ✅ NÃO redirecionar arquivos reais (imagens, manifest, etc.)
-[[redirects]]
-  from = "/icons/*"
-  to = "/icons/:splat"
-  status = 200
-
-[[redirects]]
-  from = "/manifest.webmanifest"
-  to = "/manifest.webmanifest"
-  status = 200
-
-# ✅ SPA fallback (tem que ser o ÚLTIMO)
 [[redirects]]
   from = "/*"
   to = "/index.html"
