@@ -3,7 +3,7 @@ name: Build Driver APK (TWA)
 on:
   workflow_dispatch:
   push:
-    branches: [ "main" ]
+    branches: ["main"]
 
 jobs:
   build-apk:
@@ -49,25 +49,22 @@ jobs:
             -validity 10000 \
             -dname "CN=Android Debug,O=Android,C=US"
 
-      # IMPORTANTE:
-      # Troque o DOMAIN abaixo para o seu domínio final (ex: routergo.netlify.app)
-      # e confirme que seu manifest está acessível em: https://SEU_DOMINIO/manifest.webmanifest
       - name: Init TWA project (no repo)
         run: |
-          bubblewrap init --yes \
+          bubblewrap init --yes --skipPwaValidation \
             --manifest https://routergo.netlify.app/manifest.webmanifest \
             --directory twa \
             --packageId app.routergo.driver \
             --name "RouterGo Entregador" \
             --launcherName "RouterGo" \
-            --startUrl /driver \
+            --startUrl https://routergo.netlify.app/driver \
             --iconUrl https://routergo.netlify.app/icons/icon-512.png \
             --signingKeyPath ../debug.keystore \
             --signingKeyAlias androiddebugkey \
             --signingKeyPassword android \
             --signingKeyStorePassword android
 
-      - name: Build APK (release)
+      - name: Build APK
         working-directory: twa
         run: bubblewrap build
 
