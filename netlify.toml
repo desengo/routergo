@@ -1,7 +1,11 @@
-# netlify.toml
 [build]
   command = "npm run build"
   publish = "dist"
+
+[[redirects]]
+  from = "/icons/*"
+  to = "/icons/:splat"
+  status = 200
 
 [[redirects]]
   from = "/*"
