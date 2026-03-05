@@ -69,4 +69,4 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: routergo-driver-apk
-          path: twa/app/build/outputs/apk/**/*.apk
+          path: twa/app/build/outputs/apk/**/*.apk.
