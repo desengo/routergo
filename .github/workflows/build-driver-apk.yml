@@ -17,9 +17,10 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 20
+          cache: "npm"
 
       - name: Install dependencies
-        run: npm install
+        run: npm ci
 
       - name: Build web app
         run: npm run build
@@ -50,7 +51,7 @@ jobs:
 
       - name: Init TWA project
         run: |
-          yes | bubblewrap init --skipPwaValidation \
+          printf "n\n" | bubblewrap init --skipPwaValidation \
             --manifest https://routergo.netlify.app/manifest.webmanifest \
             --directory twa \
             --packageId app.routergo.driver \
@@ -71,4 +72,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: routergo-driver-apk
-          path: twa/app/build/outputs/apk/**/*.apk
+          path: |
+            twa/app/build/outputs/apk/**/*.apk
