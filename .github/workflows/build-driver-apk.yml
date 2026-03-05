@@ -50,7 +50,7 @@ jobs:
 
       - name: Init TWA project (non-interactive)
         run: |
-          printf "n\n" | bubblewrap init --yes --skipPwaValidation \
+          bubblewrap init \
             --manifest https://routergo.netlify.app/manifest.webmanifest \
             --directory twa \
             --packageId app.routergo.driver \
@@ -61,7 +61,10 @@ jobs:
             --signingKeyPath ../debug.keystore \
             --signingKeyAlias androiddebugkey \
             --signingKeyPassword android \
-            --signingKeyStorePassword android
+            --signingKeyStorePassword android \
+            --skipPwaValidation \
+            --jdkPath "$JAVA_HOME" \
+            --yes
 
       - name: Build APK
         working-directory: twa
