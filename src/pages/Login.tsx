@@ -53,7 +53,6 @@ export default function Login() {
         password,
       });
       if (error) throw error;
-      // App.tsx já cuida do resto pelo session.
     } catch (e: any) {
       alert(e?.message || String(e));
     } finally {
@@ -102,7 +101,6 @@ export default function Login() {
       const e = cleanText(adminEmail);
       const p = adminPass;
 
-      // 1) cria usuário auth
       const { data, error } = await supabase.auth.signUp({
         email: e,
         password: p,
@@ -112,13 +110,14 @@ export default function Login() {
       const userId = data.user?.id;
       if (!userId) throw new Error("Falha ao criar usuário.");
 
-      // 2) cria/atualiza profile como admin
-      // ✅ SOLUÇÃO: NÃO enviar colunas que não existem no profiles (company_name/company_cnpj)
-      // Você ainda coleta esses campos na UI, mas por enquanto não grava no profiles.
+      // ✅ Só salva campos que EXISTEM na tabela.
+      // Se você já criou company_name e company_cnpj, isso funciona.
       const payload: any = {
         id: userId,
         role: "admin",
         display_name: cleanText(adminName),
+        company_name: cleanText(companyName),
+        company_cnpj: onlyDigits(cnpj),
       };
 
       const up = await supabase.from("profiles").upsert(payload, { onConflict: "id" });
@@ -157,31 +156,16 @@ export default function Login() {
     if (!canSignupDriver) return;
     setLoading(true);
     try {
-      // ✅ Aqui você precisa decidir como validar o código de empresa (11 dígitos)
-      // Recomendado:
-      // - Tabela: company_codes { code text pk, owner_id uuid }
-      // - Buscar owner_id pelo code e gravar company_owner_id no profile do driver.
-      //
-      // POR ENQUANTO: placeholder (vai acusar erro até você implementar company_codes).
-      const code = onlyDigits(companyCode);
+      // ⚠️ Aqui continua dependendo da sua validação do código da empresa (11 dígitos).
+      // Se você ainda NÃO implementou, vai dar erro por design.
+      const adminId = null;
 
-      // TODO: buscar adminId a partir do code
-      // const { data: cc, error: ccErr } = await supabase
-      //   .from("company_codes")
-      //   .select("owner_id")
-      //   .eq("code", code)
-      //   .single();
-      // if (ccErr) throw new Error("Código da empresa inválido.");
-      // const adminId = cc.owner_id;
-
-      const adminId = null; // <- substitua quando criar a tabela/validação
       if (!adminId) {
         throw new Error(
-          "Validação do código da empresa ainda não foi configurada. Crie a tabela company_codes (code -> owner_id) e ligue aqui."
+          "Ainda falta configurar a validação do código da empresa (11 dígitos) para vincular o entregador."
         );
       }
 
-      // 1) cria usuário auth
       const { data, error } = await supabase.auth.signUp({
         email: cleanText(driverEmail),
         password: driverPass,
@@ -191,7 +175,6 @@ export default function Login() {
       const userId = data.user?.id;
       if (!userId) throw new Error("Falha ao criar usuário.");
 
-      // 2) cria/atualiza profile como driver + vincula ao admin
       const payload: any = {
         id: userId,
         role: "driver",
@@ -224,7 +207,6 @@ export default function Login() {
   // -----------------------
   return (
     <div className="wrap">
-      {/* CARD ÚNICO: LOGIN */}
       {screen === "login" && (
         <div className="card">
           <div className="row" style={{ gap: 10, alignItems: "center" }}>
@@ -248,16 +230,29 @@ export default function Login() {
               value={password}
               type="password"
               onChange={(e) => setPassword(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") doLogin();
+              }}
             />
 
             <div className="row" style={{ gap: 10, marginTop: 16, flexWrap: "wrap" }}>
-              <button className="primary" onClick={doLogin} disabled={loading || !canLogin}>
+              <button
+                type="button"
+                className="primary"
+                onClick={(e) => {
+                  e.preventDefault();
+                  doLogin();
+                }}
+                disabled={loading || !canLogin}
+              >
                 {loading ? "..." : "Entrar"}
               </button>
 
               <button
+                type="button"
                 className="ghost"
-                onClick={() => {
+                onClick={(e) => {
+                  e.preventDefault();
                   resetSignupForms();
                   setScreen("choose");
                 }}
@@ -270,37 +265,66 @@ export default function Login() {
         </div>
       )}
 
-      {/* CARD: ESCOLHER TIPO DE CONTA */}
       {screen === "choose" && (
         <div className="card">
           <div className="row space">
             <b>Criar conta</b>
-            <button className="ghost" onClick={backToLogin} disabled={loading}>
+            <button
+              type="button"
+              className="ghost"
+              onClick={(e) => {
+                e.preventDefault();
+                backToLogin();
+              }}
+              disabled={loading}
+            >
               ← Voltar
             </button>
           </div>
 
-          <p className="muted" style={{ marginTop: 10 }}>
-            Escolha o tipo de acesso.
-          </p>
+          <p className="muted" style={{ marginTop: 10 }}>Escolha o tipo de acesso.</p>
 
           <div className="row" style={{ gap: 10, marginTop: 10, flexWrap: "wrap" }}>
-            <button className="primary" onClick={() => setScreen("signup_admin")} disabled={loading}>
+            <button
+              type="button"
+              className="primary"
+              onClick={(e) => {
+                e.preventDefault();
+                setScreen("signup_admin");
+              }}
+              disabled={loading}
+            >
               Sou Empresa
             </button>
-            <button className="ghost" onClick={() => setScreen("signup_driver")} disabled={loading}>
+
+            <button
+              type="button"
+              className="ghost"
+              onClick={(e) => {
+                e.preventDefault();
+                setScreen("signup_driver");
+              }}
+              disabled={loading}
+            >
               Sou Entregador
             </button>
           </div>
         </div>
       )}
 
-      {/* CARD: SIGNUP ADMIN */}
       {screen === "signup_admin" && (
         <div className="card">
           <div className="row space">
             <b>Cadastro da Empresa</b>
-            <button className="ghost" onClick={() => setScreen("choose")} disabled={loading}>
+            <button
+              type="button"
+              className="ghost"
+              onClick={(e) => {
+                e.preventDefault();
+                setScreen("choose");
+              }}
+              disabled={loading}
+            >
               ← Voltar
             </button>
           </div>
@@ -313,48 +337,58 @@ export default function Login() {
             <input value={companyName} onChange={(e) => setCompanyName(e.target.value)} />
 
             <label>CNPJ</label>
-            <input
-              value={cnpj}
-              onChange={(e) => setCnpj(e.target.value)}
-              placeholder="Somente números"
-            />
+            <input value={cnpj} onChange={(e) => setCnpj(e.target.value)} placeholder="Somente números" />
 
             <label>Email</label>
             <input value={adminEmail} onChange={(e) => setAdminEmail(e.target.value)} />
 
             <label>Senha</label>
-            <input
-              value={adminPass}
-              type="password"
-              onChange={(e) => setAdminPass(e.target.value)}
-            />
+            <input value={adminPass} type="password" onChange={(e) => setAdminPass(e.target.value)} />
 
             <div className="row" style={{ gap: 10, marginTop: 16, flexWrap: "wrap" }}>
               <button
+                type="button"
                 className="primary"
-                onClick={signupAdmin}
+                onClick={(e) => {
+                  e.preventDefault();
+                  signupAdmin();
+                }}
                 disabled={loading || !canSignupAdmin}
               >
                 {loading ? "..." : "Criar conta"}
               </button>
-              <button className="ghost" onClick={backToLogin} disabled={loading}>
+
+              <button
+                type="button"
+                className="ghost"
+                onClick={(e) => {
+                  e.preventDefault();
+                  backToLogin();
+                }}
+                disabled={loading}
+              >
                 Cancelar
               </button>
             </div>
 
-            <p className="muted" style={{ marginTop: 10 }}>
-              * Depois de criar, volte e faça login.
-            </p>
+            <p className="muted" style={{ marginTop: 10 }}>* Depois de criar, volte e faça login.</p>
           </div>
         </div>
       )}
 
-      {/* CARD: SIGNUP DRIVER */}
       {screen === "signup_driver" && (
         <div className="card">
           <div className="row space">
             <b>Cadastro do Entregador</b>
-            <button className="ghost" onClick={() => setScreen("choose")} disabled={loading}>
+            <button
+              type="button"
+              className="ghost"
+              onClick={(e) => {
+                e.preventDefault();
+                setScreen("choose");
+              }}
+              disabled={loading}
+            >
               ← Voltar
             </button>
           </div>
@@ -381,21 +415,30 @@ export default function Login() {
             <input value={driverEmail} onChange={(e) => setDriverEmail(e.target.value)} />
 
             <label>Senha</label>
-            <input
-              value={driverPass}
-              type="password"
-              onChange={(e) => setDriverPass(e.target.value)}
-            />
+            <input value={driverPass} type="password" onChange={(e) => setDriverPass(e.target.value)} />
 
             <div className="row" style={{ gap: 10, marginTop: 16, flexWrap: "wrap" }}>
               <button
+                type="button"
                 className="primary"
-                onClick={signupDriver}
+                onClick={(e) => {
+                  e.preventDefault();
+                  signupDriver();
+                }}
                 disabled={loading || !canSignupDriver}
               >
                 {loading ? "..." : "Criar conta"}
               </button>
-              <button className="ghost" onClick={backToLogin} disabled={loading}>
+
+              <button
+                type="button"
+                className="ghost"
+                onClick={(e) => {
+                  e.preventDefault();
+                  backToLogin();
+                }}
+                disabled={loading}
+              >
                 Cancelar
               </button>
             </div>
