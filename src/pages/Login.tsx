@@ -1,24 +1,59 @@
 import React, { useState } from "react";
 import { supabase } from "../lib/supabase";
 
+type SignUpRole = "admin" | "driver";
+
 function onlyDigits(s: string) {
   return (s || "").replace(/\D/g, "");
 }
 
-// Validação simples (tamanho). Se quiser, eu coloco validação completa do dígito do CNPJ.
-function isValidCnpj(cnpj: string) {
-  const d = onlyDigits(cnpj);
-  return d.length === 14;
+function cleanText(s: string) {
+  return (s || "").replace(/\s+/g, " ").trim();
+}
+
+function random11Digits() {
+  // 11 dígitos (não começa com 0 pra ficar mais “real”)
+  const first = String(Math.floor(Math.random() * 9) + 1);
+  let rest = "";
+  for (let i = 0; i < 10; i++) rest += String(Math.floor(Math.random() * 10));
+  return first + rest;
+}
+
+async function generateUniqueCompanyCode(): Promise<string> {
+  // tenta algumas vezes garantir unicidade
+  for (let attempt = 0; attempt < 12; attempt++) {
+    const code = random11Digits();
+
+    const { data, error } = await supabase
+      .from("profiles")
+      .select("id")
+      .eq("company_code", code)
+      .maybeSingle();
+
+    if (error) {
+      // se der erro de schema/policy, melhor explodir com msg clara
+      throw error;
+    }
+
+    // se não achou ninguém, é único
+    if (!data) return code;
+  }
+
+  // fallback (muito improvável)
+  return random11Digits();
 }
 
 export default function Login() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
 
-  // ✅ novos campos do cadastro da empresa
-  const [responsibleName, setResponsibleName] = useState("");
-  const [companyName, setCompanyName] = useState("");
-  const [cnpj, setCnpj] = useState("");
+  // 🔹 NOVO: tipo de cadastro
+  const [role, setRole] = useState<SignUpRole>("admin");
+
+  // 🔹 NOVO: campos do entregador
+  const [companyCode, setCompanyCode] = useState("");
+  const [displayName, setDisplayName] = useState("");
+  const [vehiclePlate, setVehiclePlate] = useState("");
 
   const [loading, setLoading] = useState(false);
 
@@ -36,72 +71,93 @@ export default function Login() {
   }
 
   async function signUp() {
+    setLoading(true);
+
     try {
-      setLoading(true);
-
       const emailClean = email.trim();
-      const responsibleClean = responsibleName.trim();
-      const companyClean = companyName.trim();
-      const cnpjClean = onlyDigits(cnpj);
+      if (!emailClean) throw new Error("Digite um email válido.");
+      if (!password || password.length < 6) throw new Error("A senha deve ter pelo menos 6 caracteres.");
 
-      if (!emailClean) throw new Error("Digite um email.");
-      if (!password || password.length < 6) throw new Error("Senha precisa ter pelo menos 6 caracteres.");
-      if (!responsibleClean) throw new Error("Digite o nome do responsável.");
-      if (!companyClean) throw new Error("Digite o nome da empresa.");
-      if (!isValidCnpj(cnpjClean)) throw new Error("CNPJ inválido. Digite 14 números.");
+      // validações específicas do entregador
+      const code = onlyDigits(companyCode);
+      if (role === "driver") {
+        if (code.length !== 11) throw new Error("Digite o código da empresa com 11 dígitos.");
+        if (!cleanText(displayName)) throw new Error("Digite o nome do entregador.");
+        if (!cleanText(vehiclePlate)) throw new Error("Digite a placa do veículo.");
+      }
 
-      // 1) cria conta no Auth
       const { data, error } = await supabase.auth.signUp({
         email: emailClean,
         password,
       });
+
       if (error) throw error;
 
-      // se o Supabase estiver com confirmação por email ligada,
-      // pode não existir sessão ainda. Mas o user id normalmente vem em data.user.
-      const userId = data.user?.id;
-      if (!userId) {
-        alert("Conta criada. Verifique seu email para confirmar e depois faça login.");
+      const user = data.user;
+      if (!user?.id) {
+        // Em alguns projetos com confirmação de e-mail, o user pode vir nulo.
+        // Mesmo assim a conta pode ter sido criada.
+        alert("Conta criada. Se seu projeto exige confirmação por e-mail, confirme e depois faça login.");
         return;
       }
 
-      // 2) cria/atualiza profile como admin (se você já usa profiles)
-      // Se sua tabela profiles não tiver essas colunas, me avise que eu ajusto.
-      await supabase
-        .from("profiles")
-        .upsert(
-          {
-            id: userId,
-            role: "admin",
-            display_name: responsibleClean,
-            driver_status: "offline",
-          },
-          { onConflict: "id" }
-        );
+      // 🔹 Descobre vínculo se for driver
+      let ownerId: string | null = null;
 
-      // 3) salva dados da empresa na tabela companies
-      const { error: cErr } = await supabase.from("companies").insert({
-        user_id: userId,
-        responsible_name: responsibleClean,
-        company_name: companyClean,
-        cnpj: cnpjClean,
-        email: emailClean,
-      });
+      if (role === "driver") {
+        const { data: owner, error: ownerErr } = await supabase
+          .from("profiles")
+          .select("id")
+          .eq("role", "admin")
+          .eq("company_code", code)
+          .single();
 
-      if (cErr) {
-        // se falhar por CNPJ duplicado, já dá uma mensagem boa
-        const msg = (cErr as any)?.message || "Erro ao salvar empresa.";
-        throw new Error(msg);
+        if (ownerErr) {
+          throw new Error("Código da empresa inválido (admin não encontrado).");
+        }
+
+        ownerId = owner.id;
       }
 
-      // limpa campos
-      setResponsibleName("");
-      setCompanyName("");
-      setCnpj("");
+      // 🔹 Gera company_code se for admin
+      let myCompanyCode: string | null = null;
+      if (role === "admin") {
+        myCompanyCode = await generateUniqueCompanyCode();
+      }
 
-      alert("Empresa cadastrada com sucesso! ✅");
-    } catch (e: any) {
-      alert(e?.message || String(e));
+      // 🔹 Cria/atualiza profile (UPSERT)
+      const profilePayload: any = {
+        id: user.id,
+        role: role,
+        display_name: role === "driver" ? cleanText(displayName) : null,
+        vehicle_plate: role === "driver" ? cleanText(vehiclePlate) : null,
+        company_owner_id: role === "driver" ? ownerId : null,
+        company_code: role === "admin" ? myCompanyCode : null,
+        driver_status: role === "driver" ? "offline" : null,
+        queue_position: role === "driver" ? null : null,
+      };
+
+      const up = await supabase
+        .from("profiles")
+        .upsert(profilePayload, { onConflict: "id" });
+
+      if (up.error) throw up.error;
+
+      // limpa campos
+      setPassword("");
+      setCompanyCode("");
+      setDisplayName("");
+      setVehiclePlate("");
+
+      if (role === "admin") {
+        alert(
+          `Empresa criada com sucesso!\n\nSeu código da empresa (11 dígitos): ${myCompanyCode}\n\nGuarde esse código para cadastrar entregadores.`
+        );
+      } else {
+        alert("Entregador criado com sucesso! Agora é só entrar com email e senha.");
+      }
+    } catch (err: any) {
+      alert(err?.message || String(err));
     } finally {
       setLoading(false);
     }
@@ -135,47 +191,76 @@ export default function Login() {
             onChange={(e) => setPassword(e.target.value)}
           />
 
-          {/* ✅ Campos adicionais para cadastro de empresa (admin) */}
-          <div className="hr" />
-
-          <div className="muted" style={{ marginTop: 6 }}>
-            Cadastro de empresa (Admin)
-          </div>
-
-          <label>Nome do responsável</label>
-          <input
-            value={responsibleName}
-            onChange={(e) => setResponsibleName(e.target.value)}
-            placeholder="Ex: João Silva"
-          />
-
-          <label>Nome da empresa</label>
-          <input
-            value={companyName}
-            onChange={(e) => setCompanyName(e.target.value)}
-            placeholder="Ex: XPTO Delivery"
-          />
-
-          <label>CNPJ</label>
-          <input
-            value={cnpj}
-            onChange={(e) => setCnpj(e.target.value)}
-            placeholder="Somente números"
-          />
-
-          <div className="row" style={{ gap: 10, marginTop: 14 }}>
+          <div className="row" style={{ gap: 10, marginTop: 14, flexWrap: "wrap" }}>
             <button className="primary" type="submit" disabled={loading}>
               {loading ? "..." : "Entrar"}
             </button>
 
-            <button
-              type="button"
-              className="ghost"
-              onClick={signUp}
-              disabled={loading}
-            >
-              Criar conta (Empresa)
+            <button type="button" className="ghost" onClick={signUp} disabled={loading}>
+              Criar conta
             </button>
+          </div>
+
+          {/* 🔹 NOVO: modo de cadastro (fica na mesma tela, sem mudar fluxo de login) */}
+          <div className="card" style={{ marginTop: 14 }}>
+            <div className="row space">
+              <b>Tipo de cadastro</b>
+              <span className="muted">{role === "admin" ? "Empresa (Admin)" : "Entregador"}</span>
+            </div>
+
+            <div className="row" style={{ gap: 8, marginTop: 10, flexWrap: "wrap" }}>
+              <button
+                type="button"
+                className={role === "admin" ? "primary" : "ghost"}
+                disabled={loading}
+                onClick={() => setRole("admin")}
+              >
+                🏢 Empresa
+              </button>
+              <button
+                type="button"
+                className={role === "driver" ? "primary" : "ghost"}
+                disabled={loading}
+                onClick={() => setRole("driver")}
+              >
+                🛵 Entregador
+              </button>
+            </div>
+
+            {role === "admin" && (
+              <div className="muted" style={{ marginTop: 10 }}>
+                * Ao criar empresa, o sistema gera um <b>código de 11 dígitos</b> para cadastrar entregadores.
+              </div>
+            )}
+
+            {role === "driver" && (
+              <>
+                <label>Código da empresa (11 dígitos)</label>
+                <input
+                  value={companyCode}
+                  onChange={(e) => setCompanyCode(e.target.value)}
+                  placeholder="ex: 12345678901"
+                />
+
+                <label>Nome do entregador</label>
+                <input
+                  value={displayName}
+                  onChange={(e) => setDisplayName(e.target.value)}
+                  placeholder="ex: João Silva"
+                />
+
+                <label>Placa do veículo</label>
+                <input
+                  value={vehiclePlate}
+                  onChange={(e) => setVehiclePlate(e.target.value)}
+                  placeholder="ex: ABC1D23"
+                />
+
+                <div className="muted" style={{ marginTop: 10 }}>
+                  * O entregador será vinculado automaticamente à empresa do código informado.
+                </div>
+              </>
+            )}
           </div>
         </form>
       </div>
