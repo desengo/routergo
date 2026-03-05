@@ -11,7 +11,7 @@ jobs:
     timeout-minutes: 30
 
     steps:
-      - name: Checkout
+      - name: Checkout repository
         uses: actions/checkout@v4
 
       - name: Setup Node
@@ -19,14 +19,13 @@ jobs:
         with:
           node-version: 20
 
-      # ✅ Sem cache pra não depender de lockfile
-      - name: Install deps
+      - name: Install dependencies
         run: npm install
 
-      - name: Build web (Vite)
+      - name: Build web app
         run: npm run build
 
-      - name: Setup Java (JDK 17)
+      - name: Setup Java
         uses: actions/setup-java@v4
         with:
           distribution: "temurin"
@@ -36,7 +35,7 @@ jobs:
         uses: android-actions/setup-android@v3
 
       - name: Install Bubblewrap CLI
-        run: npm i -g @bubblewrap/cli
+        run: npm install -g @bubblewrap/cli
 
       - name: Generate debug keystore
         run: |
@@ -50,21 +49,26 @@ jobs:
             -validity 10000 \
             -dname "CN=Android Debug,O=Android,C=US"
 
-      # ✅ Aqui está o segredo: responder automaticamente o prompt do JDK
-      # Ele pergunta:
-      # 1) Quer instalar o JDK? -> respondemos "No"
-      # 2) Path do JDK 17 -> respondemos $JAVA_HOME
-      - name: Init TWA project (non-interactive)
+      - name: Configure Bubblewrap paths
+        shell: bash
+        run: |
+          ANDROID_PATH="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
+          bubblewrap updateConfig --jdkPath "$JAVA_HOME"
+          bubblewrap updateConfig --androidSdkPath "$ANDROID_PATH"
+          echo "JAVA_HOME=$JAVA_HOME"
+          echo "ANDROID_PATH=$ANDROID_PATH"
+
+      - name: Init TWA project
         run: |
           rm -rf twa
-          printf "No\n%s\n" "$JAVA_HOME" | bubblewrap init --yes --skipPwaValidation \
+          bubblewrap init --yes --skipPwaValidation \
             --manifest https://routergo.netlify.app/manifest.webmanifest \
             --directory twa \
             --packageId app.routergo.driver \
             --name "RouterGo Entregador" \
             --launcherName "RouterGo" \
             --startUrl https://routergo.netlify.app/driver \
-            --iconUrl https://routergo.netlify.app/icons/icon-512.png \
+            --iconUrl https://i.ibb.co/Cp5xwFPP/file-000000003124720e9a00b2b076c59c0c.png \
             --signingKeyPath ../debug.keystore \
             --signingKeyAlias androiddebugkey \
             --signingKeyPassword android \
