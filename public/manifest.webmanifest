@@ -10,5 +10,18 @@
   "display": "standalone",
 
   "background_color": "#050c08",
-  "theme_color": "#18ff6d"
+  "theme_color": "#18ff6d",
+
+  "icons": [
+    {
+      "src": "https://i.ibb.co/Cp5xwFPP/file-000000003124720e9a00b2b076c59c0c.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "https://i.ibb.co/Cp5xwFPP/file-000000003124720e9a00b2b076c59c0c.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
 }
