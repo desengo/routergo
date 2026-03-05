@@ -40,12 +40,20 @@ export default function Login() {
   const [driverEmail, setDriverEmail] = useState("");
   const [driverPass, setDriverPass] = useState("");
 
+  // feedback (pra não ficar “mudo”)
+  const [hint, setHint] = useState<string | null>(null);
+
   const canLogin = useMemo(() => {
     return cleanText(email).includes("@") && cleanText(password).length >= 6;
   }, [email, password]);
 
   async function doLogin() {
-    if (!canLogin) return;
+    setHint(null);
+    if (!canLogin) {
+      setHint("Informe um email válido e uma senha com pelo menos 6 caracteres.");
+      return;
+    }
+
     setLoading(true);
     try {
       const { error } = await supabase.auth.signInWithPassword({
@@ -53,7 +61,7 @@ export default function Login() {
         password,
       });
       if (error) throw error;
-      // App.tsx já cuida do resto pelo session.
+      // App.tsx cuida do resto via session
     } catch (e: any) {
       alert(e?.message || String(e));
     } finally {
@@ -73,6 +81,8 @@ export default function Login() {
     setDriverPlate("");
     setDriverEmail("");
     setDriverPass("");
+
+    setHint(null);
   }
 
   function backToLogin() {
@@ -95,8 +105,24 @@ export default function Login() {
     );
   }, [adminName, companyName, cnpj, adminEmail, adminPass]);
 
+  function whyAdminInvalid(): string | null {
+    if (cleanText(adminName).length < 2) return "Preencha o nome do responsável.";
+    if (cleanText(companyName).length < 2) return "Preencha o nome da empresa.";
+    if (onlyDigits(cnpj).length < 14) return "CNPJ deve ter 14 dígitos (somente números).";
+    if (!cleanText(adminEmail).includes("@")) return "Email inválido.";
+    if (cleanText(adminPass).length < 6) return "Senha deve ter no mínimo 6 caracteres.";
+    return null;
+  }
+
   async function signupAdmin() {
-    if (!canSignupAdmin) return;
+    setHint(null);
+
+    const msg = whyAdminInvalid();
+    if (msg) {
+      setHint(msg);
+      return;
+    }
+
     setLoading(true);
     try {
       const e = cleanText(adminEmail);
@@ -112,22 +138,19 @@ export default function Login() {
       const userId = data.user?.id;
       if (!userId) throw new Error("Falha ao criar usuário.");
 
-      // 2) cria/atualiza profile como admin
-      // Observação: assume que sua tabela "profiles" existe e aceita update/insert.
-      // Se você já tem trigger criando profile, o update funciona também.
+      // 2) profile como admin
+      // ⚠️ Se você ainda NÃO tem colunas company_name/company_cnpj no profiles,
+      // remova essas duas linhas para não falhar.
       const payload: any = {
         id: userId,
         role: "admin",
         display_name: cleanText(adminName),
-        // campos da empresa (se você ainda não tem colunas, isso não vai salvar)
         company_name: cleanText(companyName),
         company_cnpj: onlyDigits(cnpj),
       };
 
-      // tenta upsert (se você não tiver upsert habilitado, troque por insert+update)
       const up = await supabase.from("profiles").upsert(payload, { onConflict: "id" });
       if (up.error) {
-        // fallback: tenta update
         const upd = await supabase.from("profiles").update(payload).eq("id", userId);
         if (upd.error) throw upd.error;
       }
@@ -158,20 +181,30 @@ export default function Login() {
     );
   }, [companyCode, driverName, driverPlate, driverEmail, driverPass]);
 
+  function whyDriverInvalid(): string | null {
+    if (onlyDigits(companyCode).length !== 11) return "Código da empresa deve ter 11 dígitos.";
+    if (cleanText(driverName).length < 2) return "Preencha o nome do entregador.";
+    if (cleanText(driverPlate).length < 6) return "Placa inválida (ex: ABC1D23).";
+    if (!cleanText(driverEmail).includes("@")) return "Email inválido.";
+    if (cleanText(driverPass).length < 6) return "Senha deve ter no mínimo 6 caracteres.";
+    return null;
+  }
+
   async function signupDriver() {
-    if (!canSignupDriver) return;
+    setHint(null);
+
+    const msg = whyDriverInvalid();
+    if (msg) {
+      setHint(msg);
+      return;
+    }
+
     setLoading(true);
     try {
-      // ✅ Aqui você precisa decidir como validar o código de empresa (11 dígitos)
-      // Exemplo de estratégia (recomendada):
-      // - Tabela: company_codes { code text pk, owner_id uuid }
-      // - Você busca owner_id pelo code e grava company_owner_id no profile do driver.
-      //
-      // POR ENQUANTO: vou deixar um placeholder.
-      // Troque esse bloco pelo seu fetch real.
       const code = onlyDigits(companyCode);
 
-      // TODO: buscar adminId a partir do code
+      // TODO: validar código e buscar adminId
+      // Exemplo:
       // const { data: cc, error: ccErr } = await supabase
       //   .from("company_codes")
       //   .select("owner_id")
@@ -180,14 +213,13 @@ export default function Login() {
       // if (ccErr) throw new Error("Código da empresa inválido.");
       // const adminId = cc.owner_id;
 
-      const adminId = null; // <- substitua quando criar a tabela/validação
+      const adminId = null as any;
       if (!adminId) {
         throw new Error(
-          "Validação do código da empresa ainda não foi configurada. Crie a tabela company_codes (code -> owner_id) e ligue aqui."
+          `Validação do código (${code}) ainda não foi configurada.`
         );
       }
 
-      // 1) cria usuário auth
       const { data, error } = await supabase.auth.signUp({
         email: cleanText(driverEmail),
         password: driverPass,
@@ -197,7 +229,6 @@ export default function Login() {
       const userId = data.user?.id;
       if (!userId) throw new Error("Falha ao criar usuário.");
 
-      // 2) cria/atualiza profile como driver + vincula ao admin
       const payload: any = {
         id: userId,
         role: "driver",
@@ -230,7 +261,6 @@ export default function Login() {
   // -----------------------
   return (
     <div className="wrap">
-      {/* CARD ÚNICO: LOGIN */}
       {screen === "login" && (
         <div className="card">
           <div className="row" style={{ gap: 10, alignItems: "center" }}>
@@ -256,12 +286,24 @@ export default function Login() {
               onChange={(e) => setPassword(e.target.value)}
             />
 
+            {hint && (
+              <div className="muted" style={{ marginTop: 10 }}>
+                <b>{hint}</b>
+              </div>
+            )}
+
             <div className="row" style={{ gap: 10, marginTop: 16, flexWrap: "wrap" }}>
-              <button className="primary" onClick={doLogin} disabled={loading || !canLogin}>
+              <button
+                type="button"
+                className="primary"
+                onClick={doLogin}
+                disabled={loading}
+              >
                 {loading ? "..." : "Entrar"}
               </button>
 
               <button
+                type="button"
                 className="ghost"
                 onClick={() => {
                   resetSignupForms();
@@ -276,37 +318,58 @@ export default function Login() {
         </div>
       )}
 
-      {/* CARD: ESCOLHER TIPO DE CONTA */}
       {screen === "choose" && (
         <div className="card">
           <div className="row space">
             <b>Criar conta</b>
-            <button className="ghost" onClick={backToLogin} disabled={loading}>
+            <button type="button" className="ghost" onClick={backToLogin} disabled={loading}>
               ← Voltar
             </button>
           </div>
 
-          <p className="muted" style={{ marginTop: 10 }}>
-            Escolha o tipo de acesso.
-          </p>
+          <p className="muted" style={{ marginTop: 10 }}>Escolha o tipo de acesso.</p>
 
           <div className="row" style={{ gap: 10, marginTop: 10, flexWrap: "wrap" }}>
-            <button className="primary" onClick={() => setScreen("signup_admin")} disabled={loading}>
+            <button
+              type="button"
+              className="primary"
+              onClick={() => {
+                setHint(null);
+                setScreen("signup_admin");
+              }}
+              disabled={loading}
+            >
               Sou Empresa
             </button>
-            <button className="ghost" onClick={() => setScreen("signup_driver")} disabled={loading}>
+
+            <button
+              type="button"
+              className="ghost"
+              onClick={() => {
+                setHint(null);
+                setScreen("signup_driver");
+              }}
+              disabled={loading}
+            >
               Sou Entregador
             </button>
           </div>
         </div>
       )}
 
-      {/* CARD: SIGNUP ADMIN */}
       {screen === "signup_admin" && (
         <div className="card">
           <div className="row space">
             <b>Cadastro da Empresa</b>
-            <button className="ghost" onClick={() => setScreen("choose")} disabled={loading}>
+            <button
+              type="button"
+              className="ghost"
+              onClick={() => {
+                setHint(null);
+                setScreen("choose");
+              }}
+              disabled={loading}
+            >
               ← Voltar
             </button>
           </div>
@@ -335,15 +398,23 @@ export default function Login() {
               onChange={(e) => setAdminPass(e.target.value)}
             />
 
+            {hint && (
+              <div className="muted" style={{ marginTop: 10 }}>
+                <b>{hint}</b>
+              </div>
+            )}
+
             <div className="row" style={{ gap: 10, marginTop: 16, flexWrap: "wrap" }}>
               <button
+                type="button"
                 className="primary"
                 onClick={signupAdmin}
-                disabled={loading || !canSignupAdmin}
+                disabled={loading}
               >
                 {loading ? "..." : "Criar conta"}
               </button>
-              <button className="ghost" onClick={backToLogin} disabled={loading}>
+
+              <button type="button" className="ghost" onClick={backToLogin} disabled={loading}>
                 Cancelar
               </button>
             </div>
@@ -355,12 +426,19 @@ export default function Login() {
         </div>
       )}
 
-      {/* CARD: SIGNUP DRIVER */}
       {screen === "signup_driver" && (
         <div className="card">
           <div className="row space">
             <b>Cadastro do Entregador</b>
-            <button className="ghost" onClick={() => setScreen("choose")} disabled={loading}>
+            <button
+              type="button"
+              className="ghost"
+              onClick={() => {
+                setHint(null);
+                setScreen("choose");
+              }}
+              disabled={loading}
+            >
               ← Voltar
             </button>
           </div>
@@ -393,15 +471,23 @@ export default function Login() {
               onChange={(e) => setDriverPass(e.target.value)}
             />
 
+            {hint && (
+              <div className="muted" style={{ marginTop: 10 }}>
+                <b>{hint}</b>
+              </div>
+            )}
+
             <div className="row" style={{ gap: 10, marginTop: 16, flexWrap: "wrap" }}>
               <button
+                type="button"
                 className="primary"
                 onClick={signupDriver}
-                disabled={loading || !canSignupDriver}
+                disabled={loading}
               >
                 {loading ? "..." : "Criar conta"}
               </button>
-              <button className="ghost" onClick={backToLogin} disabled={loading}>
+
+              <button type="button" className="ghost" onClick={backToLogin} disabled={loading}>
                 Cancelar
               </button>
             </div>
