@@ -49,8 +49,13 @@ jobs:
             -dname "CN=Android Debug,O=Android,C=US"
 
       - name: Init TWA project (non-interactive)
+        shell: bash
         run: |
-          bubblewrap init \
+          set -e
+          # Responde:
+          # 1) "n" = NÃO instalar JDK
+          # 2) caminho do JDK 17 já instalado pelo actions/setup-java
+          printf "n\n%s\n" "$JAVA_HOME" | bubblewrap init \
             --manifest https://routergo.netlify.app/manifest.webmanifest \
             --directory twa \
             --packageId app.routergo.driver \
@@ -62,7 +67,7 @@ jobs:
             --signingKeyAlias androiddebugkey \
             --signingKeyPassword android \
             --signingKeyStorePassword android \
-            --skipPwaValidation \
+            --skipPwaValidation/
             --jdkPath "$JAVA_HOME" \
             --yes
 
