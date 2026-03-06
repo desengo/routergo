@@ -1,12 +1,25 @@
-"icons": [
-  {
-    "src": "/icons/icon-192.png",
-    "sizes": "192x192",
-    "type": "image/png"
-  },
-  {
-    "src": "/icons/icon-512.png",
-    "sizes": "512x512",
-    "type": "image/png"
-  }
-]
+{
+  "name": "RouterGo Entregador",
+  "short_name": "RouterGo",
+  "description": "Aplicativo do entregador RouterGo",
+  "lang": "pt-BR",
+  "start_url": "/driver",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#050c08",
+  "theme_color": "#18ff6d",
+  "icons": [
+    {
+      "src": "https://i.ibb.co/hRbLZn5m/file-00000000a9c871f589252b63d66b7839-removebg-preview.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "https://i.ibb.co/hRbLZn5m/file-00000000a9c871f589252b63d66b7839-removebg-preview.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}
