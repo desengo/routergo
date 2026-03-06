@@ -112,7 +112,12 @@ export default function Login() {
       {screen === "login" && (
         <div className="card">
           <div className="row" style={{ gap: 10, alignItems: "center" }}>
-           
+            <img
+              src="https://i.ibb.co/DPYsRh9r/file-00000000a9c871f589252b63d66b7839-removebg-preview.png"
+              alt="RouterGo"
+              style={{ width: 36, height: 36 }}
+            />
+            <div>
               <div style={{ fontSize: 28, fontWeight: 900 }}>RouterGo</div>
               <div className="muted">Gestão inteligente de entregas</div>
             </div>
@@ -195,9 +200,7 @@ export default function Login() {
                     flexShrink: 0,
                   }}
                 >
-                  <div style="border: 2px solid #ccc; padding: 10px; width: 300px;">
-    <img src="https://ibb.co/VcCqRj8z" alt="Entregago" style="max-width: 100%; height: auto;">
-</div>
+                  🕋
                 </div>
 
                 <div style={{ flex: 1 }}>
