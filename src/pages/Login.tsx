@@ -200,12 +200,7 @@ export default function Login() {
                     flexShrink: 0,
                   }}
                 >
-                 <img
-              src="https://i.ibb.co/DPYsRh9r/file-00000000a9c871f589252b63d66b7839-removebg-preview.png"
-              alt="RouterGo"
-              style={{ width: 36, height: 36 }}
-            />
-                  <div/>
+                
 
                 <div style={{ flex: 1 }}>
                   <div style={{ fontSize: 16, fontWeight: 800 }}>App Entregago</div>
