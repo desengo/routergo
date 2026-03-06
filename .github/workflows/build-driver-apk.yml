@@ -53,8 +53,12 @@ jobs:
         shell: bash
         run: |
           rm -rf twa
+
           cat > answers.txt <<EOF
           n
+          n
+          n
+          $JAVA_HOME
           $JAVA_HOME
           EOF
 
