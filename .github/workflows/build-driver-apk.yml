@@ -8,7 +8,6 @@ on:
 jobs:
   build-apk:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
 
     steps:
       - name: Checkout repository
@@ -19,11 +18,11 @@ jobs:
         with:
           node-version: 20
 
-      - name: Setup Java 17
+      - name: Setup Java
         uses: actions/setup-java@v4
         with:
-          distribution: "temurin"
-          java-version: "17"
+          distribution: temurin
+          java-version: 17
 
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
@@ -34,53 +33,41 @@ jobs:
       - name: Build web app
         run: npm run build
 
-      - name: Install Bubblewrap CLI
-        run: npm install -g @bubblewrap/cli
-
       - name: Generate debug keystore
         run: |
           keytool -genkeypair -v \
-            -keystore debug.keystore \
-            -storepass android \
-            -keypass android \
-            -alias androiddebugkey \
-            -keyalg RSA \
-            -keysize 2048 \
-            -validity 10000 \
-            -dname "CN=Android Debug,O=Android,C=US"
+          -keystore debug.keystore \
+          -storepass android \
+          -keypass android \
+          -alias androiddebugkey \
+          -keyalg RSA \
+          -keysize 2048 \
+          -validity 10000 \
+          -dname "CN=Android Debug,O=Android,C=US"
 
-      - name: Init TWA project (force TTY)
-        shell: bash
+      - name: Init TWA project
         run: |
           rm -rf twa
-
-          cat > answers.txt <<EOF
-          n
-          n
-          n
-          $JAVA_HOME
-          $JAVA_HOME
-          EOF
-
-          script -q -e -c 'bubblewrap init --skipPwaValidation \
-            --manifest https://routergo.netlify.app/manifest.webmanifest \
-            --directory twa \
-            --packageId app.routergo.driver \
-            --name "RouterGo Entregador" \
-            --launcherName "RouterGo" \
-            --startUrl https://routergo.netlify.app/driver \
-            --iconUrl https://i.ibb.co/Cp5xwFPP/file-000000003124720e9a00b2b076c59c0c.png \
-            --signingKeyPath ../debug.keystore \
-            --signingKeyAlias androiddebugkey \
-            --signingKeyPassword android \
-            --signingKeyStorePassword android' /dev/null < answers.txt
+          npx @bubblewrap/cli init \
+          --skipPwaValidation \
+          --manifest https://routergo.netlify.app/manifest.webmanifest \
+          --directory twa \
+          --packageId app.routergo.driver \
+          --name "RouterGo Entregador" \
+          --launcherName "RouterGo" \
+          --startUrl https://routergo.netlify.app/driver \
+          --iconUrl https://i.ibb.co/Cp5xwFPP/file-000000003124720e9a00b2b076c59c0c.png \
+          --signingKeyPath debug.keystore \
+          --signingKeyAlias androiddebugkey \
+          --signingKeyPassword android \
+          --signingKeyStorePassword android
 
       - name: Build APK
         working-directory: twa
-        run: bubblewrap build
+        run: npx @bubblewrap/cli build
 
-      - name: Upload APK artifact
+      - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: routergo-driver-apk
-          path: twa/app/build/outputs/apk/**/*.apk.
+          path: twa/app/build/outputs/apk/**/*.apk
