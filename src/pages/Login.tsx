@@ -200,7 +200,7 @@ export default function Login() {
                     flexShrink: 0,
                   }}
                 >
-                  📦
+                  🌐
                 </div>
 
                 <div style={{ flex: 1 }}>
