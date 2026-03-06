@@ -16,15 +16,9 @@ export default function Login() {
   const [screen, setScreen] = useState<Screen>("login");
   const [loading, setLoading] = useState(false);
 
-  // -----------------------
-  // LOGIN
-  // -----------------------
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
 
-  // -----------------------
-  // SIGNUP ADMIN (empresa)
-  // -----------------------
   const [adminName, setAdminName] = useState("");
   const [companyName, setCompanyName] = useState("");
   const [cnpj, setCnpj] = useState("");
@@ -37,39 +31,27 @@ export default function Login() {
 
   async function doLogin() {
     if (!canLogin) return;
+
     setLoading(true);
+
     try {
       const { error } = await supabase.auth.signInWithPassword({
         email: cleanText(email),
         password,
       });
+
       if (error) throw error;
     } catch (e: any) {
       alert(e?.message || String(e));
-    } finally {
-      setLoading(false);
     }
+
+    setLoading(false);
   }
 
-  function resetSignupForms() {
-    setAdminName("");
-    setCompanyName("");
-    setCnpj("");
-    setAdminEmail("");
-    setAdminPass("");
-  }
-
-  function backToLogin() {
-    resetSignupForms();
-    setScreen("login");
-  }
-
-  // -----------------------
-  // SIGNUP: ADMIN
-  // -----------------------
   const canSignupAdmin = useMemo(() => {
     const e = cleanText(adminEmail);
     const p = cleanText(adminPass);
+
     return (
       cleanText(adminName).length >= 2 &&
       cleanText(companyName).length >= 2 &&
@@ -81,19 +63,18 @@ export default function Login() {
 
   async function signupAdmin() {
     if (!canSignupAdmin) return;
-    setLoading(true);
-    try {
-      const e = cleanText(adminEmail);
-      const p = adminPass;
 
+    setLoading(true);
+
+    try {
       const { data, error } = await supabase.auth.signUp({
-        email: e,
-        password: p,
+        email: cleanText(adminEmail),
+        password: adminPass,
       });
+
       if (error) throw error;
 
       const userId = data.user?.id;
-      if (!userId) throw new Error("Falha ao criar usuário.");
 
       const payload: any = {
         id: userId,
@@ -103,157 +84,149 @@ export default function Login() {
         company_cnpj: onlyDigits(cnpj),
       };
 
-      const up = await supabase.from("profiles").upsert(payload, { onConflict: "id" });
-      if (up.error) {
-        const upd = await supabase.from("profiles").update(payload).eq("id", userId);
-        if (upd.error) throw upd.error;
-      }
+      await supabase.from("profiles").upsert(payload);
 
-      alert("Conta de empresa criada. Agora faça login.");
-      backToLogin();
-      setEmail(e);
+      alert("Conta criada. Faça login.");
+      setScreen("login");
+
+      setEmail(adminEmail);
       setPassword("");
     } catch (e: any) {
       alert(e?.message || String(e));
-    } finally {
-      setLoading(false);
     }
+
+    setLoading(false);
   }
 
-  // -----------------------
-  // UI
-  // -----------------------
   return (
     <div className="wrap">
       {screen === "login" && (
         <div className="card">
-          <div className="row" style={{ gap: 10, alignItems: "center" }}>
-            <img
-              src="https://i.ibb.co/DPYsRh9r/file-00000000a9c871f589252b63d66b7839-removebg-preview.png"
-              alt="RouterGo"
-              style={{ width: 36, height: 36 }}
-            />
-            <div>
-              <div style={{ fontSize: 28, fontWeight: 900 }}>RouterGo</div>
-              <div className="muted">Gestão inteligente de entregas</div>
-            </div>
+
+          <div style={{textAlign:"center",marginBottom:20}}>
+            <h1>RouterGo</h1>
+            <div className="muted">Gestão inteligente de entregas</div>
           </div>
 
-          <div style={{ marginTop: 18 }}>
-            <label>Email</label>
-            <input value={email} onChange={(e) => setEmail(e.target.value)} />
+          <label>Email</label>
+          <input
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+          />
 
-            <label>Senha</label>
-            <input
-              value={password}
-              type="password"
-              onChange={(e) => setPassword(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") doLogin();
+          <label>Senha</label>
+          <input
+            type="password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+          />
+
+          <div className="row" style={{gap:10,marginTop:16}}>
+            <button
+              className="primary"
+              onClick={doLogin}
+              disabled={!canLogin || loading}
+            >
+              Entrar
+            </button>
+
+            <button
+              className="ghost"
+              onClick={() => setScreen("signup_admin")}
+            >
+              Criar conta
+            </button>
+          </div>
+
+          {/* CARD APP ENTREGADOR */}
+          <div
+            style={{
+              marginTop:30,
+              padding:16,
+              borderRadius:10,
+              background:"#f3f4f6",
+              textAlign:"center"
+            }}
+          >
+            <div style={{fontWeight:"bold"}}>
+              📦 App Entregador
+            </div>
+
+            <div style={{fontSize:13,marginTop:4,marginBottom:10}}>
+              Baixe o aplicativo para acessar suas rotas
+            </div>
+
+            <a
+              href="/app-release.apk"
+              style={{
+                background:"#22c55e",
+                color:"#fff",
+                padding:"8px 14px",
+                borderRadius:6,
+                textDecoration:"none",
+                fontSize:14
               }}
-            />
-
-            <div className="row" style={{ gap: 10, marginTop: 16, flexWrap: "wrap" }}>
-              <button
-                type="button"
-                className="primary"
-                onClick={(e) => {
-                  e.preventDefault();
-                  doLogin();
-                }}
-                disabled={loading || !canLogin}
-              >
-                {loading ? "..." : "Entrar"}
-              </button>
-
-              <button
-                type="button"
-                className="ghost"
-                onClick={(e) => {
-                  e.preventDefault();
-                  resetSignupForms();
-                  setScreen("signup_admin");
-                }}
-                disabled={loading}
-              >
-                Criar conta
-              </button>
-            </div>
+            >
+              Baixar APK
+            </a>
           </div>
+
         </div>
       )}
 
       {screen === "signup_admin" && (
         <div className="card">
-          <div className="row space">
-            <b>Cadastro da Empresa</b>
+
+          <h2>Cadastro da Empresa</h2>
+
+          <label>Nome do responsável</label>
+          <input
+            value={adminName}
+            onChange={(e) => setAdminName(e.target.value)}
+          />
+
+          <label>Nome da empresa</label>
+          <input
+            value={companyName}
+            onChange={(e) => setCompanyName(e.target.value)}
+          />
+
+          <label>CNPJ</label>
+          <input
+            value={cnpj}
+            onChange={(e) => setCnpj(e.target.value)}
+          />
+
+          <label>Email</label>
+          <input
+            value={adminEmail}
+            onChange={(e) => setAdminEmail(e.target.value)}
+          />
+
+          <label>Senha</label>
+          <input
+            type="password"
+            value={adminPass}
+            onChange={(e) => setAdminPass(e.target.value)}
+          />
+
+          <div className="row" style={{gap:10,marginTop:16}}>
             <button
-              type="button"
-              className="ghost"
-              onClick={(e) => {
-                e.preventDefault();
-                backToLogin();
-              }}
-              disabled={loading}
+              className="primary"
+              onClick={signupAdmin}
+              disabled={!canSignupAdmin || loading}
             >
-              ← Voltar
+              Criar conta
+            </button>
+
+            <button
+              className="ghost"
+              onClick={() => setScreen("login")}
+            >
+              Voltar
             </button>
           </div>
 
-          <div style={{ marginTop: 12 }}>
-            <label>Nome do responsável</label>
-            <input value={adminName} onChange={(e) => setAdminName(e.target.value)} />
-
-            <label>Nome da empresa</label>
-            <input value={companyName} onChange={(e) => setCompanyName(e.target.value)} />
-
-            <label>CNPJ</label>
-            <input
-              value={cnpj}
-              onChange={(e) => setCnpj(e.target.value)}
-              placeholder="Somente números"
-            />
-
-            <label>Email</label>
-            <input value={adminEmail} onChange={(e) => setAdminEmail(e.target.value)} />
-
-            <label>Senha</label>
-            <input
-              value={adminPass}
-              type="password"
-              onChange={(e) => setAdminPass(e.target.value)}
-            />
-
-            <div className="row" style={{ gap: 10, marginTop: 16, flexWrap: "wrap" }}>
-              <button
-                type="button"
-                className="primary"
-                onClick={(e) => {
-                  e.preventDefault();
-                  signupAdmin();
-                }}
-                disabled={loading || !canSignupAdmin}
-              >
-                {loading ? "..." : "Criar conta"}
-              </button>
-
-              <button
-                type="button"
-                className="ghost"
-                onClick={(e) => {
-                  e.preventDefault();
-                  backToLogin();
-                }}
-                disabled={loading}
-              >
-                Cancelar
-              </button>
-            </div>
-
-            <p className="muted" style={{ marginTop: 10 }}>
-              * Depois de criar, volte e faça login.
-            </p>
-          </div>
         </div>
       )}
     </div>
