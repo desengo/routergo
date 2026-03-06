@@ -34,16 +34,8 @@ jobs:
       - name: Build web app
         run: npm run build
 
-      - name: Install Bubblewrap CLI + expect
-        run: |
-          npm install -g @bubblewrap/cli
-          sudo apt-get update
-          sudo apt-get install -y expect
-
-      - name: Preconfigure Bubblewrap
-        run: |
-          bubblewrap updateConfig --jdkPath="$JAVA_HOME"
-          bubblewrap updateConfig --androidSdkPath="${ANDROID_SDK_ROOT:-$ANDROID_HOME}"
+      - name: Install Bubblewrap CLI
+        run: npm install -g @bubblewrap/cli
 
       - name: Generate debug keystore
         run: |
@@ -57,13 +49,16 @@ jobs:
             -validity 10000 \
             -dname "CN=Android Debug,O=Android,C=US"
 
-      - name: Init TWA project
+      - name: Init TWA project (force TTY)
         shell: bash
         run: |
           rm -rf twa
-          expect << EOF
-          set timeout -1
-          spawn bubblewrap init --yes --skipPwaValidation \
+          cat > answers.txt <<EOF
+          n
+          $JAVA_HOME
+          EOF
+
+          script -q -e -c 'bubblewrap init --skipPwaValidation \
             --manifest https://routergo.netlify.app/manifest.webmanifest \
             --directory twa \
             --packageId app.routergo.driver \
@@ -74,20 +69,7 @@ jobs:
             --signingKeyPath ../debug.keystore \
             --signingKeyAlias androiddebugkey \
             --signingKeyPassword android \
-            --signingKeyStorePassword android
-
-          expect {
-            -re "Do you want Bubblewrap to install the JDK.*" {
-              send "n\r"
-              exp_continue
-            }
-            -re "Path to your existing JDK 17:.*" {
-              send "$env(JAVA_HOME)\r"
-              exp_continue
-            }
-            eof
-          }
-          EOF
+            --signingKeyStorePassword android' /dev/null < answers.txt
 
       - name: Build APK
         working-directory: twa
