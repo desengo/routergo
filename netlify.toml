@@ -1,3 +1,17 @@
+[build]
+command = "npm run build"
+publish = "dist"
+
+[[redirects]]
+from = "/icons/*"
+to = "/icons/:splat"
+status = 200
+
+[[redirects]]
+from = "/manifest.webmanifest"
+to = "/manifest.webmanifest"
+status = 200
+
 [[redirects]]
 from = "/*"
 to = "/index.html"
