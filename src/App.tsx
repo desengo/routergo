@@ -4,6 +4,7 @@ import { Routes as RRoutes, Route, Navigate } from "react-router-dom";
 import { supabase } from "./lib/supabase";
 
 import Login from "./pages/Login";
+import DriverLogin from "./pages/DriverLogin";
 import Dashboard from "./pages/Dashboard";
 import DriverApp from "./pages/DriverApp";
 import RouteMapbox from "./pages/RouteMapbox";
@@ -19,13 +20,14 @@ async function getSessionAndRole(): Promise<{ session: any; role: Role }> {
 
   const userId = session.user.id;
 
-  // tenta buscar role do profile
-  const p = await supabase.from("profiles").select("role").eq("id", userId).maybeSingle();
+  const p = await supabase
+    .from("profiles")
+    .select("role")
+    .eq("id", userId)
+    .maybeSingle();
 
-  // se der erro de RLS, tabela, etc, não trava o app – só deixa role null
   if (p.error) return { session, role: null };
 
-  // se não existe profile, cria um default driver (para não quebrar)
   if (!p.data) {
     const ins = await supabase.from("profiles").insert({
       id: userId,
@@ -34,12 +36,16 @@ async function getSessionAndRole(): Promise<{ session: any; role: Role }> {
       queue_position: null,
     });
 
-    // se insert falhar (ex.: trigger já cria), tenta ler de novo
     if (!ins.error) {
       return { session, role: "driver" };
     }
 
-    const p2 = await supabase.from("profiles").select("role").eq("id", userId).maybeSingle();
+    const p2 = await supabase
+      .from("profiles")
+      .select("role")
+      .eq("id", userId)
+      .maybeSingle();
+
     if (!p2.error && p2.data?.role) {
       const r = (p2.data.role === "admin" ? "admin" : "driver") as Role;
       return { session, role: r };
@@ -49,7 +55,8 @@ async function getSessionAndRole(): Promise<{ session: any; role: Role }> {
   }
 
   const raw = (p.data.role || "").toLowerCase();
-  const role: Role = raw === "admin" ? "admin" : raw === "driver" ? "driver" : null;
+  const role: Role =
+    raw === "admin" ? "admin" : raw === "driver" ? "driver" : null;
 
   return { session, role };
 }
@@ -65,7 +72,6 @@ export default function App() {
       setSession(r.session);
       setRole(r.role);
     } catch (e) {
-      // se der erro, não deixa tela verde
       setSession(null);
       setRole(null);
     } finally {
@@ -77,7 +83,6 @@ export default function App() {
     sync();
 
     const { data: sub } = supabase.auth.onAuthStateChange(async () => {
-      // em qualquer mudança de auth, recarrega sessão+role
       setReady(false);
       await sync();
     });
@@ -99,33 +104,89 @@ export default function App() {
     );
   }
 
-  // sem login → sempre Login
-  if (!session) return <Login />;
-
   return (
     <RRoutes>
-      {/* Home: manda para o app correto */}
+      {/* LOGIN ADMIN / EMPRESA */}
       <Route
         path="/"
-        element={<Navigate to={role === "admin" ? "/admin" : "/driver"} replace />}
+        element={
+          session ? (
+            role === "admin" ? (
+              <Navigate to="/admin" replace />
+            ) : role === "driver" ? (
+              <Navigate to="/driver" replace />
+            ) : (
+              <Login />
+            )
+          ) : (
+            <Login />
+          )
+        }
+      />
+
+      {/* LOGIN ENTREGADOR */}
+      <Route
+        path="/driver-login"
+        element={
+          session ? (
+            role === "driver" ? (
+              <Navigate to="/driver" replace />
+            ) : role === "admin" ? (
+              <Navigate to="/admin" replace />
+            ) : (
+              <DriverLogin />
+            )
+          ) : (
+            <DriverLogin />
+          )
+        }
       />
 
       {/* ADMIN */}
       <Route
         path="/admin"
-        element={role === "admin" ? <Dashboard /> : <Navigate to="/driver" replace />}
+        element={
+          session ? (
+            role === "admin" ? (
+              <Dashboard />
+            ) : (
+              <Navigate to="/driver" replace />
+            )
+          ) : (
+            <Navigate to="/" replace />
+          )
+        }
       />
 
       {/* DRIVER */}
       <Route
         path="/driver"
-        element={role === "driver" ? <DriverApp /> : <Navigate to="/admin" replace />}
+        element={
+          session ? (
+            role === "driver" ? (
+              <DriverApp />
+            ) : (
+              <Navigate to="/admin" replace />
+            )
+          ) : (
+            <Navigate to="/driver-login" replace />
+          )
+        }
       />
 
-      {/* MAPA: pode abrir de admin ou driver */}
-      <Route path="/route-mapbox" element={<RouteMapbox />} />
+      {/* MAPA */}
+      <Route
+        path="/route-mapbox"
+        element={
+          session ? (
+            <RouteMapbox />
+          ) : (
+            <Navigate to="/driver-login" replace />
+          )
+        }
+      />
 
-      {/* Fallback */}
+      {/* FALLBACK */}
       <Route path="*" element={<Navigate to="/" replace />} />
     </RRoutes>
   );
