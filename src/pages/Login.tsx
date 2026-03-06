@@ -200,7 +200,9 @@ export default function Login() {
                     flexShrink: 0,
                   }}
                 >
-                  🌐
+                  <div style="border: 2px solid #ccc; padding: 10px; width: 300px;">
+    <img src="https://ibb.co/VcCqRj8z" alt="Entregago" style="max-width: 100%; height: auto;">
+</div>
                 </div>
 
                 <div style={{ flex: 1 }}>
