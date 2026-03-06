@@ -2,7 +2,7 @@
 import React, { useMemo, useState } from "react";
 import { supabase } from "../lib/supabase";
 
-type Screen = "login" | "choose" | "signup_admin" | "signup_driver";
+type Screen = "login" | "signup_admin";
 
 function cleanText(s: string) {
   return (s || "").replace(/\s+/g, " ").trim();
@@ -31,15 +31,6 @@ export default function Login() {
   const [adminEmail, setAdminEmail] = useState("");
   const [adminPass, setAdminPass] = useState("");
 
-  // -----------------------
-  // SIGNUP DRIVER (entregador)
-  // -----------------------
-  const [companyCode, setCompanyCode] = useState(""); // 11 dígitos
-  const [driverName, setDriverName] = useState("");
-  const [driverPlate, setDriverPlate] = useState("");
-  const [driverEmail, setDriverEmail] = useState("");
-  const [driverPass, setDriverPass] = useState("");
-
   const canLogin = useMemo(() => {
     return cleanText(email).includes("@") && cleanText(password).length >= 6;
   }, [email, password]);
@@ -66,12 +57,6 @@ export default function Login() {
     setCnpj("");
     setAdminEmail("");
     setAdminPass("");
-
-    setCompanyCode("");
-    setDriverName("");
-    setDriverPlate("");
-    setDriverEmail("");
-    setDriverPass("");
   }
 
   function backToLogin() {
@@ -110,8 +95,6 @@ export default function Login() {
       const userId = data.user?.id;
       if (!userId) throw new Error("Falha ao criar usuário.");
 
-      // ✅ Só salva campos que EXISTEM na tabela.
-      // Se você já criou company_name e company_cnpj, isso funciona.
       const payload: any = {
         id: userId,
         role: "admin",
@@ -129,71 +112,6 @@ export default function Login() {
       alert("Conta de empresa criada. Agora faça login.");
       backToLogin();
       setEmail(e);
-      setPassword("");
-    } catch (e: any) {
-      alert(e?.message || String(e));
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  // -----------------------
-  // SIGNUP: DRIVER
-  // -----------------------
-  const canSignupDriver = useMemo(() => {
-    const e = cleanText(driverEmail);
-    const p = cleanText(driverPass);
-    return (
-      onlyDigits(companyCode).length === 11 &&
-      cleanText(driverName).length >= 2 &&
-      cleanText(driverPlate).length >= 6 &&
-      e.includes("@") &&
-      p.length >= 6
-    );
-  }, [companyCode, driverName, driverPlate, driverEmail, driverPass]);
-
-  async function signupDriver() {
-    if (!canSignupDriver) return;
-    setLoading(true);
-    try {
-      // ⚠️ Aqui continua dependendo da sua validação do código da empresa (11 dígitos).
-      // Se você ainda NÃO implementou, vai dar erro por design.
-      const adminId = null;
-
-      if (!adminId) {
-        throw new Error(
-          "Ainda falta configurar a validação do código da empresa (11 dígitos) para vincular o entregador."
-        );
-      }
-
-      const { data, error } = await supabase.auth.signUp({
-        email: cleanText(driverEmail),
-        password: driverPass,
-      });
-      if (error) throw error;
-
-      const userId = data.user?.id;
-      if (!userId) throw new Error("Falha ao criar usuário.");
-
-      const payload: any = {
-        id: userId,
-        role: "driver",
-        display_name: cleanText(driverName),
-        vehicle_plate: cleanText(driverPlate).toUpperCase(),
-        company_owner_id: adminId,
-        driver_status: "offline",
-        queue_position: null,
-      };
-
-      const up = await supabase.from("profiles").upsert(payload, { onConflict: "id" });
-      if (up.error) {
-        const upd = await supabase.from("profiles").update(payload).eq("id", userId);
-        if (upd.error) throw upd.error;
-      }
-
-      alert("Conta de entregador criada. Agora faça login.");
-      backToLogin();
-      setEmail(cleanText(driverEmail));
       setPassword("");
     } catch (e: any) {
       alert(e?.message || String(e));
@@ -254,60 +172,13 @@ export default function Login() {
                 onClick={(e) => {
                   e.preventDefault();
                   resetSignupForms();
-                  setScreen("choose");
+                  setScreen("signup_admin");
                 }}
                 disabled={loading}
               >
                 Criar conta
               </button>
             </div>
-          </div>
-        </div>
-      )}
-
-      {screen === "choose" && (
-        <div className="card">
-          <div className="row space">
-            <b>Criar conta</b>
-            <button
-              type="button"
-              className="ghost"
-              onClick={(e) => {
-                e.preventDefault();
-                backToLogin();
-              }}
-              disabled={loading}
-            >
-              ← Voltar
-            </button>
-          </div>
-
-          <p className="muted" style={{ marginTop: 10 }}>Escolha o tipo de acesso.</p>
-
-          <div className="row" style={{ gap: 10, marginTop: 10, flexWrap: "wrap" }}>
-            <button
-              type="button"
-              className="primary"
-              onClick={(e) => {
-                e.preventDefault();
-                setScreen("signup_admin");
-              }}
-              disabled={loading}
-            >
-              Sou Empresa
-            </button>
-
-            <button
-              type="button"
-              className="ghost"
-              onClick={(e) => {
-                e.preventDefault();
-                setScreen("signup_driver");
-              }}
-              disabled={loading}
-            >
-              Sou Entregador
-            </button>
           </div>
         </div>
       )}
@@ -321,7 +192,7 @@ export default function Login() {
               className="ghost"
               onClick={(e) => {
                 e.preventDefault();
-                setScreen("choose");
+                backToLogin();
               }}
               disabled={loading}
             >
@@ -337,13 +208,21 @@ export default function Login() {
             <input value={companyName} onChange={(e) => setCompanyName(e.target.value)} />
 
             <label>CNPJ</label>
-            <input value={cnpj} onChange={(e) => setCnpj(e.target.value)} placeholder="Somente números" />
+            <input
+              value={cnpj}
+              onChange={(e) => setCnpj(e.target.value)}
+              placeholder="Somente números"
+            />
 
             <label>Email</label>
             <input value={adminEmail} onChange={(e) => setAdminEmail(e.target.value)} />
 
             <label>Senha</label>
-            <input value={adminPass} type="password" onChange={(e) => setAdminPass(e.target.value)} />
+            <input
+              value={adminPass}
+              type="password"
+              onChange={(e) => setAdminPass(e.target.value)}
+            />
 
             <div className="row" style={{ gap: 10, marginTop: 16, flexWrap: "wrap" }}>
               <button
@@ -371,80 +250,8 @@ export default function Login() {
               </button>
             </div>
 
-            <p className="muted" style={{ marginTop: 10 }}>* Depois de criar, volte e faça login.</p>
-          </div>
-        </div>
-      )}
-
-      {screen === "signup_driver" && (
-        <div className="card">
-          <div className="row space">
-            <b>Cadastro do Entregador</b>
-            <button
-              type="button"
-              className="ghost"
-              onClick={(e) => {
-                e.preventDefault();
-                setScreen("choose");
-              }}
-              disabled={loading}
-            >
-              ← Voltar
-            </button>
-          </div>
-
-          <div style={{ marginTop: 12 }}>
-            <label>Código da empresa (11 dígitos)</label>
-            <input
-              value={companyCode}
-              onChange={(e) => setCompanyCode(e.target.value)}
-              placeholder="Ex: 12345678901"
-            />
-
-            <label>Nome</label>
-            <input value={driverName} onChange={(e) => setDriverName(e.target.value)} />
-
-            <label>Placa</label>
-            <input
-              value={driverPlate}
-              onChange={(e) => setDriverPlate(e.target.value.toUpperCase())}
-              placeholder="ABC1D23"
-            />
-
-            <label>Email</label>
-            <input value={driverEmail} onChange={(e) => setDriverEmail(e.target.value)} />
-
-            <label>Senha</label>
-            <input value={driverPass} type="password" onChange={(e) => setDriverPass(e.target.value)} />
-
-            <div className="row" style={{ gap: 10, marginTop: 16, flexWrap: "wrap" }}>
-              <button
-                type="button"
-                className="primary"
-                onClick={(e) => {
-                  e.preventDefault();
-                  signupDriver();
-                }}
-                disabled={loading || !canSignupDriver}
-              >
-                {loading ? "..." : "Criar conta"}
-              </button>
-
-              <button
-                type="button"
-                className="ghost"
-                onClick={(e) => {
-                  e.preventDefault();
-                  backToLogin();
-                }}
-                disabled={loading}
-              >
-                Cancelar
-              </button>
-            </div>
-
             <p className="muted" style={{ marginTop: 10 }}>
-              * Precisa do código da empresa para vincular ao admin corretamente.
+              * Depois de criar, volte e faça login.
             </p>
           </div>
         </div>
