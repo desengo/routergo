@@ -119,7 +119,7 @@ export default function Login() {
             />
             <div>
               <div style={{ fontSize: 28, fontWeight: 900 }}>RouterGo</div>
-              <div className="muted">Gestão inteligente </div>
+              <div className="muted">Gestão inteligente de entregas</div>
             </div>
           </div>
 
@@ -200,7 +200,8 @@ export default function Login() {
                     flexShrink: 0,
                   }}
                 >
-                
+                  📦
+                </div>
 
                 <div style={{ flex: 1 }}>
                   <div style={{ fontSize: 16, fontWeight: 800 }}>App Entregago</div>
