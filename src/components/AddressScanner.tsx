@@ -13,7 +13,7 @@ type ParsedAddress = {
   rawText: string;
 };
 
-const GEMINI_API_KEY = "COLE_SUA_CHAVE_AQUI";
+const GEMINI_API_KEY = "AIzaSyALI8d0sywOovwQ7uLMettYQ_JNtTIdA5E";
 
 export default function AddressScanner() {
   const videoRef = useRef<HTMLVideoElement | null>(null);
@@ -92,7 +92,7 @@ export default function AddressScanner() {
       setError("");
       setLastSaved(null);
 
-      if (!GEMINI_API_KEY || GEMINI_API_KEY === "gen-lang-client-0401246465") {
+      if (!GEMINI_API_KEY || GEMINI_API_KEY === "AIzaSyALI8d0sywOovwQ7uLMettYQ_JNtTIdA5E") {
         throw new Error("Preencha a chave do Gemini no código.");
       }
 
