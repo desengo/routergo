@@ -13,7 +13,7 @@ type ParsedAddress = {
   rawText: string;
 };
 
-const GEMINI_API_KEY = import.meta.env.VITE_GEMINI_API_KEY;
+const GEMINI_API_KEY = "COLE_SUA_CHAVE_AQUI";
 
 export default function AddressScanner() {
   const videoRef = useRef<HTMLVideoElement | null>(null);
@@ -29,6 +29,7 @@ export default function AddressScanner() {
   async function openCamera() {
     try {
       setError("");
+      setLastSaved(null);
 
       const stream = await navigator.mediaDevices.getUserMedia({
         video: { facingMode: "environment" },
@@ -91,8 +92,8 @@ export default function AddressScanner() {
       setError("");
       setLastSaved(null);
 
-      if (!GEMINI_API_KEY) {
-        throw new Error("VITE_GEMINI_API_KEY não encontrada no .env.local");
+      if (!GEMINI_API_KEY || GEMINI_API_KEY === "gen-lang-client-0401246465") {
+        throw new Error("Preencha a chave do Gemini no código.");
       }
 
       const image = capturePhotoBase64();
@@ -101,24 +102,13 @@ export default function AddressScanner() {
         throw new Error("Não foi possível capturar a foto.");
       }
 
-      const prompt = `
-Leia esta imagem de etiqueta/endereço e devolva APENAS um JSON válido com estes campos:
-recipient, street, number, complement, neighborhood, city, state, zipCode, rawText
-
-Regras:
-- Responda somente JSON puro
-- Se não encontrar um campo, use ""
-- state deve vir como sigla, por exemplo SP
-- rawText deve trazer o texto principal lido da imagem
-- Não invente informações
-`;
-
       const response = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`,
+        "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent",
         {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
+            "x-goog-api-key": GEMINI_API_KEY,
           },
           body: JSON.stringify({
             generationConfig: {
@@ -127,7 +117,19 @@ Regras:
             contents: [
               {
                 parts: [
-                  { text: prompt },
+                  {
+                    text: `
+Leia esta imagem de etiqueta/endereço e devolva APENAS um JSON válido com estes campos:
+recipient, street, number, complement, neighborhood, city, state, zipCode, rawText
+
+Regras:
+- Responda somente JSON puro
+- Se não encontrar um campo, use ""
+- state deve vir como sigla, por exemplo SP
+- rawText deve conter o texto principal lido da imagem
+- Não invente informações
+                    `.trim(),
+                  },
                   {
                     inlineData: {
                       mimeType: "image/jpeg",
@@ -159,7 +161,7 @@ Regras:
 
       try {
         parsed = JSON.parse(text);
-      } catch (e) {
+      } catch {
         console.error("Resposta recebida:", text);
         throw new Error("A resposta do Gemini não veio em JSON válido.");
       }
@@ -199,7 +201,7 @@ Regras:
       });
 
       if (saveError) {
-        throw saveError;
+        throw new Error(saveError.message);
       }
 
       setLastSaved(address);
