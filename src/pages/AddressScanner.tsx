@@ -1,29 +1,48 @@
 import React, { useState } from "react";
-import Tesseract from "tesseract.js";
 import { supabase } from "../lib/supabase";
 
 export default function AddressScanner() {
   const [loading, setLoading] = useState(false);
-  const [text, setText] = useState("");
 
   async function handleImage(file: File) {
     setLoading(true);
 
     try {
-      const result = await Tesseract.recognize(file, "por");
-      const extractedText = result.data.text;
+      const formData = new FormData();
+      formData.append("file", file);
 
-      setText(extractedText);
+      const response = await fetch(
+        "https://api.ocr.space/parse/image",
+        {
+          method: "POST",
+          headers: {
+            apikey: "helloworld"
+          },
+          body: formData
+        }
+      );
 
-      const addresses = extractAddresses(extractedText);
+      const data = await response.json();
+
+      const text = data?.ParsedResults?.[0]?.ParsedText || "";
+
+      const addresses = extractAddresses(text);
+
+      const { data: session } = await supabase.auth.getSession();
+      const userId = session.session?.user?.id;
 
       for (const address of addresses) {
-        await createDelivery(address);
+        await supabase.from("deliveries").insert({
+          address: address,
+          user_id: userId,
+          status: "new"
+        });
       }
 
-      alert(`${addresses.length} entregas criadas automaticamente.`);
-    } catch (e) {
-      console.error(e);
+      alert(addresses.length + " entregas criadas automaticamente.");
+
+    } catch (err) {
+      console.error(err);
       alert("Erro ao ler imagem.");
     }
 
@@ -36,7 +55,7 @@ export default function AddressScanner() {
     const addresses: string[] = [];
 
     for (const line of lines) {
-      if (line.match(/\d{1,5}/) && line.length > 10) {
+      if (line.match(/\d+/) && line.length > 10) {
         addresses.push(line.trim());
       }
     }
@@ -44,23 +63,8 @@ export default function AddressScanner() {
     return addresses;
   }
 
-  async function createDelivery(address: string) {
-    const { data: session } = await supabase.auth.getSession();
-    const userId = session.session?.user?.id;
-
-    if (!userId) return;
-
-    await supabase.from("deliveries").insert({
-      address: address,
-      user_id: userId,
-      status: "pending",
-    });
-  }
-
   return (
-    <div className="card">
-      <h3>📷 Importar Endereços por Imagem</h3>
-
+    <div>
       <input
         type="file"
         accept="image/*"
@@ -72,13 +76,6 @@ export default function AddressScanner() {
       />
 
       {loading && <p>Lendo imagem...</p>}
-
-      {text && (
-        <div style={{ marginTop: 10 }}>
-          <b>Texto detectado:</b>
-          <pre>{text}</pre>
-        </div>
-      )}
     </div>
   );
 }
