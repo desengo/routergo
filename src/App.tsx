@@ -1,4 +1,3 @@
-// src/App.tsx
 import React, { useEffect, useState } from "react";
 import { Routes as RRoutes, Route, Navigate } from "react-router-dom";
 import { supabase } from "./lib/supabase";
@@ -26,31 +25,12 @@ async function getSessionAndRole(): Promise<{ session: any; role: Role }> {
     .eq("id", userId)
     .maybeSingle();
 
-  if (p.error) return { session, role: null };
+  if (p.error) {
+    console.error("Erro ao buscar perfil:", p.error);
+    return { session, role: null };
+  }
 
   if (!p.data) {
-    const ins = await supabase.from("profiles").insert({
-      id: userId,
-      role: "driver",
-      driver_status: "offline",
-      queue_position: null,
-    });
-
-    if (!ins.error) {
-      return { session, role: "driver" };
-    }
-
-    const p2 = await supabase
-      .from("profiles")
-      .select("role")
-      .eq("id", userId)
-      .maybeSingle();
-
-    if (!p2.error && p2.data?.role) {
-      const r = (p2.data.role === "admin" ? "admin" : "driver") as Role;
-      return { session, role: r };
-    }
-
     return { session, role: null };
   }
 
@@ -72,6 +52,7 @@ export default function App() {
       setSession(r.session);
       setRole(r.role);
     } catch (e) {
+      console.error("Erro no sync:", e);
       setSession(null);
       setRole(null);
     } finally {
@@ -82,13 +63,12 @@ export default function App() {
   useEffect(() => {
     sync();
 
-    const { data: sub } = supabase.auth.onAuthStateChange(async () => {
+    const { data: sub } = supabase.auth.onAuthStateChange(() => {
       setReady(false);
-      await sync();
+      sync();
     });
 
     return () => sub.subscription.unsubscribe();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   if (!ready) {
@@ -149,8 +129,10 @@ export default function App() {
           session ? (
             role === "admin" ? (
               <Dashboard />
-            ) : (
+            ) : role === "driver" ? (
               <Navigate to="/driver" replace />
+            ) : (
+              <Navigate to="/" replace />
             )
           ) : (
             <Navigate to="/" replace />
@@ -165,8 +147,10 @@ export default function App() {
           session ? (
             role === "driver" ? (
               <DriverApp />
-            ) : (
+            ) : role === "admin" ? (
               <Navigate to="/admin" replace />
+            ) : (
+              <Navigate to="/driver-login" replace />
             )
           ) : (
             <Navigate to="/driver-login" replace />
