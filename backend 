@@ -1,73 +1,32 @@
 // backend/index.ts
-import express, { Request, Response, NextFunction } from "express";
-import dotenv from "dotenv";
+import express from "express";
 import cors from "cors";
-import bodyParser from "body-parser";
+import dotenv from "dotenv";
 import { createClient } from "@supabase/supabase-js";
 
-// Carrega variáveis de ambiente do .env
 dotenv.config();
 
 const app = express();
-const port = process.env.PORT || 4000;
-
-// Middleware
 app.use(cors());
-app.use(bodyParser.json());
+app.use(express.json());
 
-// Supabase client
-const supabase = createClient(
-  process.env.SUPABASE_URL!,
-  process.env.SUPABASE_KEY!
-);
+// Supabase
+const supabaseUrl = process.env.SUPABASE_URL!;
+const supabaseKey = process.env.SUPABASE_KEY!;
+const supabase = createClient(supabaseUrl, supabaseKey);
 
-// Validação da chave API
-function apiKeyMiddleware(req: Request, res: Response, next: NextFunction) {
-  const apiKey = req.headers["x-api-key"];
-  if (!apiKey || apiKey !== process.env.API_KEY) {
+// Chave da API para validação
+const API_KEY = process.env.API_KEY!;
+
+// Middleware de validação de chave
+function validateApiKey(req: express.Request, res: express.Response, next: express.NextFunction) {
+  const key = req.headers["x-api-key"];
+  if (!key || key !== API_KEY) {
     return res.status(401).json({ error: "Chave API inválida" });
   }
   next();
 }
 
-// Rota para receber pedidos
-app.post("/deliveries", apiKeyMiddleware, async (req: Request, res: Response) => {
-  try {
-    const { recipient, street, number, complement, neighborhood, city, state, zipCode, rawText } = req.body;
-
-    if (!street || !city || !state) {
-      return res.status(400).json({ error: "Endereço incompleto" });
-    }
-
-    const { error } = await supabase.from("deliveries").insert({
-      recipient: recipient || "",
-      street,
-      number: number || "",
-      complement: complement || "",
-      neighborhood: neighborhood || "",
-      city,
-      state,
-      zip_code: zipCode || "",
-      raw_text: rawText || "",
-      source: "api",
-    });
-
-    if (error) {
-      throw error;
-    }
-
-    return res.json({ success: true, message: "Entrega registrada com sucesso." });
-  } catch (err: any) {
-    console.error(err);
-    return res.status(500).json({ error: err.message || "Erro ao registrar entrega." });
-  }
-});
-
-// Teste de API
-app.get("/", (req: Request, res: Response) => {
-  res.send("API do Routergo/Anote funcionando!");
-});
-
-app.listen(port, () => {
-  console.log(`Servidor rodando em http://localhost:${port}`);
-});
+// Rota para criar entrega
+app.post("/deliveries", validateApiKey, async (req, res) => {
+  try
