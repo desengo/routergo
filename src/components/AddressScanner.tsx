@@ -119,15 +119,47 @@ export default function AddressScanner() {
                 parts: [
                   {
                     text: `
-Leia esta imagem de etiqueta/endereço e devolva APENAS um JSON válido com estes campos:
-recipient, street, number, complement, neighborhood, city, state, zipCode, rawText
+Analise esta imagem de etiqueta ou endereço de entrega no Brasil.
 
-Regras:
-- Responda somente JSON puro
-- Se não encontrar um campo, use ""
-- state deve vir como sigla, por exemplo SP
+Extraia o endereço e devolva APENAS um JSON válido com os seguintes campos:
+
+recipient
+street
+number
+complement
+neighborhood
+city
+state
+zipCode
+rawText
+
+Regras importantes:
+
+- O endereço é brasileiro
+- Separe corretamente rua e número
+- Se houver apartamento, bloco, casa ou lote, coloque em "complement"
+- Se houver bairro, coloque em "neighborhood"
+- state deve vir como sigla (SP, RJ, MG etc)
+- zipCode deve conter apenas números
 - rawText deve conter o texto principal lido da imagem
+- Se um campo não existir, use ""
 - Não invente informações
+- Responda SOMENTE com JSON puro
+- Não escreva explicações
+
+Exemplo de resposta:
+
+{
+  "recipient": "João",
+  "street": "Rua das Flores",
+  "number": "123",
+  "complement": "Apto 21",
+  "neighborhood": "Centro",
+  "city": "Campinas",
+  "state": "SP",
+  "zipCode": "13000000",
+  "rawText": "João Rua das Flores 123 Apto 21 Campinas SP"
+}
                     `.trim(),
                   },
                   {
